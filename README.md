@@ -3,4 +3,31 @@ A word finding game.
 
 ### Download
 
-- `Zip`: [Download](https://github.com/sinhamajoni06-cell/Zero-Theory/archive/refs/heads/main.zip)
+<table>
+  <tr>
+    <td align="left"><code>Zero-Theory-core.zip</code></td>
+    <td align="right"><a href="https://github.com/sinhamajoni06-cell/Zero-Theory/archive/refs/heads/main.zip">Download</a></td>
+  </tr>
+</table>
+
+
+## Requirements
+- **Operating System**: *Windows* `10` or `11` (Recommended).
+- **Compiler**: g++ supporting at least `C++17` or more (standard). ~*added to your system's or user's PATH environment variable*.
+- **MSYS2 Environment**: Specifically installed at `C:\msys64\` using the *UCRT64* environment, as hardcoded in the script ***paths***.
+
+# Project Folder
+
+```
+├── core/
+│   ├── lib/
+│   │   ├── header/         # Additional C++ headers
+│   │   └── cpp/            # Must contain at least one .cpp file
+│   └── src/
+│       └── engine/
+│           └── NoTEngine.cpp # Main entry point file
+├── main/                   # All Script and Additional files creates this automatically for output
+├── bin/                    # FreeType header files and libfreetype-6.dll inside the MSYS2 UCRT64 directory
+├── build.bat               # Main build script to execute on your system
+└── README.md
+```
