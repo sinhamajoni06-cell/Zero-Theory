@@ -1,7 +1,7 @@
 # Zero-Theory
 A word finding game.
 
-### Download
+# Download
 
 <table>
   <tr>
@@ -33,8 +33,7 @@ A word finding game.
 └── README.md
 ```
 ---
-### G++ Installation and Setup
----
+## G++ Installation and Setup
 
 - Go to [msys2.org](https://www.msys2.org/) and Install G++. (**Recommended**: C++17)
 - double-click the downloaded `installer` and run it.
