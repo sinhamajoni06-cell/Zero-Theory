@@ -32,14 +32,16 @@ A word finding game.
 ├── build.bat               # Main build script to execute on your system
 └── README.md
 ```
-
+---
 ### G++ Installation and Setup
+---
 
 - Go to [msys2.org](https://www.msys2.org/) and Install G++. (**Recommended**: C++17)
 - double-click the downloaded `installer` and run it.
 - Keep the default destination path: `C:\msys64` as it is.
 - Once installed, launch **MSYS2 UCRT64** from your Start menu.
 - In **MSYS2 terminal** to install *SFML* run this single command inside it-
+  
   ```
   pacman -S mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-sfml
   ```
