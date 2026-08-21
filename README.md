@@ -15,7 +15,7 @@ A word finding game.
 - **Operating System**: *Windows* `10` or `11` (Recommended).
 - **Compiler**: [g++](https://www.msys2.org/) supporting at least `C++17` or more (standard). ~*added to your system's or user's PATH environment variable*.
 - **MSYS2 Environment**: Specifically installed at `C:\msys64\` using the *UCRT64* environment, as hardcoded in the script ***paths***.
-- **Step-by-Step Installation**: For g++ [Continue](https://github.com/sinhamajoni06-cell/Zero-Theory/edit/main/README.md#g-installation-and-setup)
+- **Step-by-Step Installation**: For g++ [Continue](https://github.com/sinhamajoni06-cell/Zero-Theory#g-installation-and-setup)
 
 # Project Folder
 
@@ -34,4 +34,14 @@ A word finding game.
 ```
 
 ### G++ Installation and Setup
+
+- Go to [msys2.org](https://www.msys2.org/) and Install G++. (**Recommended**: C++17)
+- double-click the downloaded `installer` and run it.
+- Keep the default destination path: `C:\msys64` as it is.
+- Once installed, launch **MSYS2 UCRT64** from your Start menu.
+- In **MSYS2 terminal** to install *SFML* run this single command inside it-
+  ```
+  pacman -S mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-sfml
+  ```
+- Now you have install `G++` and `SFML`, just run the ***build.bat*** file.
 
