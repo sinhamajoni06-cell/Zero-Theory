@@ -20,17 +20,20 @@ A word finding game.
 # Project Folder
 
 ```
-├── core/
-│   ├── lib/
-│   │   ├── header/         # Additional C++ headers
-│   │   └── cpp/            # Must contain at least one .cpp file
-│   └── src/
-│       └── engine/
-│           └── NoTEngine.cpp # Main entry point file
-├── main/                   # All Script and Additional files creates this automatically for output
-├── bin/                    # FreeType header files and libfreetype-6.dll inside the MSYS2 UCRT64 directory
-├── build.bat               # Main build script to execute on your system
-└── README.md
+Zero-Theory-core/
+  ├── bin/
+  │   └── Game.exe            # The main Executable file, create after the compilation.
+  ├── core/
+  │   ├── lib/
+  │   │   ├── header/         # Additional C++ headers
+  │   │   └── cpp/            # Must contain at least one .cpp file
+  │   └── src/
+  │       └── engine/
+  │           └── NoTEngine.cpp # Main entry point file
+  ├── main/                   # All Script and Additional files creates this automatically for output
+  ├── bin/                    # FreeType header files and libfreetype-6.dll inside the MSYS2 UCRT64 directory
+  ├── build.bat               # Main build script to execute on your system
+  └── README.md
 ```
 ---
 ## G++ Installation and Setup
@@ -49,4 +52,10 @@ A word finding game.
   pacman -S mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-sfml
   ```
 - Now you have install `G++` and `SFML`, just run the ***build.bat*** file.
+- I will create `Game.exe` and other files and folders at-
+  ```
+  Zero-Theory-core/
+  └── bin/
+      └── Game.exe
+  ```
 
