@@ -1,4 +1,4 @@
-#include <iostream> 
+#include <iostream>
 #include "../../lib/header/NotDebugger.hpp"
 #include <SFML/Graphics.hpp>
 //new added "bool g_showExitConfirm = false;"
@@ -110,13 +110,19 @@ int main() {
     settingsButton.setOutlineThickness(2.f);
     settingsButton.setOutlineColor(sf::Color::White);
 
-    //New added code for exit program
-    std::cout << "[DEBUG] Attempting to load font..." << std::endl;
+    // New added code for exit program
+    std::cout << "[DEBUG] Attempting to load fonts..." << std::endl;
     sf::Font font;
     bool fontLoaded = font.openFromFile("main/assets/fonts/VT323-Regular.ttf");
     std::cout << "[DEBUG] Font loaded = " << fontLoaded << std::endl;
     if(!fontLoaded){
         LOG_FULL("Failed to load font for exit prompt.", DebugSeverity::Error, "Assets", __LINE__);
+    }
+
+    sf::Font titleFont;
+    bool titleFontLoaded = titleFont.openFromFile("main/assets/fonts/Honk-Regular-VariableFont_MORF,SHLN.ttf");
+    if(!titleFontLoaded){
+        LOG_FULL("Failed to load title font.", DebugSeverity::Error, "Assets", __LINE__);
     }
 
     sf::Text startText(font, "Start", 28);
@@ -131,9 +137,26 @@ int main() {
     settingsText.setOrigin({settingsBounds.size.x / 2.f, settingsBounds.size.y / 2.f + settingsBounds.position.y});
     settingsText.setPosition(settingsButton.getPosition());
 
+    // Game Title ("Zero Theory") - Uses Honk Font
+    sf::Text gameTitleText(titleFontLoaded ? titleFont : font, "Zero Theory", 64);
+    gameTitleText.setFillColor(sf::Color::White);
+    sf::FloatRect gameTitleBounds = gameTitleText.getLocalBounds();
+    gameTitleText.setOrigin({gameTitleBounds.size.x / 2.f, gameTitleBounds.size.y / 2.f + gameTitleBounds.position.y});
+    gameTitleText.setPosition({SCREEN_WIDTH / 2.f, 100.f});
+
+    // Game Subtitle ("A word finding game.") - Uses Regular Font
+    sf::Text gameSubtitleText(font, "A word finding game.", 24);
+    gameSubtitleText.setFillColor(sf::Color(200, 200, 200, 255));
+    sf::FloatRect gameSubtitleBounds = gameSubtitleText.getLocalBounds();
+    gameSubtitleText.setOrigin({gameSubtitleBounds.size.x / 2.f, gameSubtitleBounds.size.y / 2.f + gameSubtitleBounds.position.y});
+    gameSubtitleText.setPosition({SCREEN_WIDTH / 2.f, 150.f});
+
+    // Global menu state variable (Add near top variables if not present)
+    bool g_showHowToPlayMenu = false;
+
     // Settings menu panel
     const float panelWidth = 500.f;
-    const float panelHeight = 350.f;
+    const float panelHeight = 420.f;
     sf::RectangleShape settingsPanel({panelWidth, panelHeight});
     settingsPanel.setOrigin({panelWidth / 2.f, panelHeight / 2.f});
     settingsPanel.setPosition({SCREEN_WIDTH / 2.f, SCREEN_HEIGHT / 2.f});
@@ -159,6 +182,94 @@ int main() {
         closeIconSize / closeIconTexSize.y
     });
     closeSettingsButton.setPosition({
+        SCREEN_WIDTH / 2.f + panelWidth / 2.f - closeIconSize / 2.f - 15.f,
+        SCREEN_HEIGHT / 2.f - panelHeight / 2.f + closeIconSize / 2.f + 15.f
+    });
+
+    // Load Settings Button Textures (Handled return values to fix [[nodiscard]] warnings)
+    sf::Texture howToPlayTex, infoBtnTex, exitBtnTex;
+    if(!howToPlayTex.loadFromFile("main/assets/images/UI/Buttons/How.PNG")){
+        LOG_FULL("Failed to load How To Play button texture.", DebugSeverity::Error, "Assets", __LINE__);
+    }
+    if(!infoBtnTex.loadFromFile("main/assets/images/UI/Buttons/info.png")){
+        LOG_FULL("Failed to load info button texture.", DebugSeverity::Error, "Assets", __LINE__);
+    }
+    if(!exitBtnTex.loadFromFile("main/assets/images/UI/Buttons/exit.PNG")){
+        LOG_FULL("Failed to load exit button texture.", DebugSeverity::Error, "Assets", __LINE__);
+    }
+
+    const float iconBtnSize = 50.f;
+
+    // 1. Info / About Icon Button (Top-Left of settings panel)
+    sf::Sprite settingsAboutButton(infoBtnTex);
+    sf::Vector2u abtTexSize = infoBtnTex.getSize();
+    settingsAboutButton.setOrigin({abtTexSize.x / 2.f, abtTexSize.y / 2.f});
+    settingsAboutButton.setScale({iconBtnSize / abtTexSize.x, iconBtnSize / abtTexSize.y});
+    settingsAboutButton.setPosition({
+        SCREEN_WIDTH / 2.f - panelWidth / 2.f + iconBtnSize / 2.f + 20.f,
+        SCREEN_HEIGHT / 2.f - panelHeight / 2.f + iconBtnSize / 2.f + 20.f
+    });
+
+    // 2. How To Play Button Group (Center of the screen)
+    sf::Text howToPlayLabel(font, "How to Play", 28);
+    howToPlayLabel.setFillColor(sf::Color::White);
+    sf::FloatRect htpLabelBounds = howToPlayLabel.getLocalBounds();
+
+    sf::Sprite howToPlayButton(howToPlayTex);
+    sf::Vector2u htpTexSize = howToPlayTex.getSize();
+    float htpImgSize = 45.f;
+    howToPlayButton.setOrigin({htpTexSize.x / 2.f, htpTexSize.y / 2.f});
+    howToPlayButton.setScale({htpImgSize / htpTexSize.x, htpImgSize / htpTexSize.y});
+
+    // Calculate total width of "How to Play [Image]" to center them as a unit
+    float htpSpacing = 15.f;
+    float htpTotalWidth = htpLabelBounds.size.x + htpSpacing + htpImgSize;
+    float htpStartX = SCREEN_WIDTH / 2.f - htpTotalWidth / 2.f;
+
+    howToPlayLabel.setOrigin({0.f, htpLabelBounds.size.y / 2.f + htpLabelBounds.position.y});
+    howToPlayLabel.setPosition({htpStartX, SCREEN_HEIGHT / 2.f});
+
+    howToPlayButton.setPosition({
+        htpStartX + htpLabelBounds.size.x + htpSpacing + htpImgSize / 2.f,
+        SCREEN_HEIGHT / 2.f
+    });
+
+    // 3. Exit Button (Bottom Center of settings panel)
+    sf::Sprite settingsExitButton(exitBtnTex);
+    sf::Vector2u extTexSize = exitBtnTex.getSize();
+    const float exitWidth = 160.f;
+    const float exitHeight = 60.f;
+    settingsExitButton.setOrigin({extTexSize.x / 2.f, extTexSize.y / 2.f});
+    settingsExitButton.setScale({exitWidth / extTexSize.x, exitHeight / extTexSize.y});
+    settingsExitButton.setPosition({
+        SCREEN_WIDTH / 2.f,
+        SCREEN_HEIGHT / 2.f + panelHeight / 2.f - exitHeight / 2.f - 25.f
+    });
+
+    // How To Play Panel Setup
+    sf::RectangleShape htpPanel({panelWidth, panelHeight});
+    htpPanel.setOrigin({panelWidth / 2.f, panelHeight / 2.f});
+    htpPanel.setPosition({SCREEN_WIDTH / 2.f, SCREEN_HEIGHT / 2.f});
+    htpPanel.setFillColor(sf::Color(25, 25, 25, 240));
+    htpPanel.setOutlineThickness(2.f);
+    htpPanel.setOutlineColor(sf::Color::White);
+
+    sf::Text htpTitle(font, "How to Play", 36);
+    htpTitle.setFillColor(sf::Color::White);
+    sf::FloatRect htpTitleBounds = htpTitle.getLocalBounds();
+    htpTitle.setOrigin({htpTitleBounds.size.x / 2.f, htpTitleBounds.size.y / 2.f + htpTitleBounds.position.y});
+    htpTitle.setPosition({SCREEN_WIDTH / 2.f, SCREEN_HEIGHT / 2.f - panelHeight / 2.f + 40.f});
+
+    sf::Text htpBodyText(font, "1. Find hidden words on the screen.\n2. Connect letters to form valid words.\n3. Complete the target before time runs out!", 22);
+    htpBodyText.setFillColor(sf::Color::White);
+    sf::FloatRect htpBodyBounds = htpBodyText.getLocalBounds();
+    htpBodyText.setOrigin({htpBodyBounds.size.x / 2.f, htpBodyBounds.size.y / 2.f + htpBodyBounds.position.y});
+    htpBodyText.setPosition({SCREEN_WIDTH / 2.f, SCREEN_HEIGHT / 2.f});
+
+    sf::Sprite closeHTPButton(closeIconTexture);
+    closeHTPButton.setOrigin({closeIconTexSize.x / 2.f, closeIconTexSize.y / 2.f});
+    closeHTPButton.setScale({closeIconSize / closeIconTexSize.x, closeIconSize / closeIconTexSize.y});
+    closeHTPButton.setPosition({
         SCREEN_WIDTH / 2.f + panelWidth / 2.f - closeIconSize / 2.f - 15.f,
         SCREEN_HEIGHT / 2.f - panelHeight / 2.f + closeIconSize / 2.f + 15.f
     });
@@ -308,13 +419,16 @@ int main() {
             }
 
             if(const auto* keyPressed = event->getIf<sf::Event::KeyPressed>()){
-                if(g_showSettingsMenu && keyPressed->code == sf::Keyboard::Key::Escape){
+                if(g_showHowToPlayMenu && keyPressed->code == sf::Keyboard::Key::Escape){
+                    g_showHowToPlayMenu = false;
+                }
+                else if(g_showSettingsMenu && keyPressed->code == sf::Keyboard::Key::Escape){
                     g_showSettingsMenu = false;
                 }
                 else if(g_showAboutMenu && keyPressed->code == sf::Keyboard::Key::Escape){
                     g_showAboutMenu = false;
                 }
-                else if(!g_showExitConfirm && !g_showSettingsMenu && !g_showAboutMenu && keyPressed->code == sf::Keyboard::Key::Escape){
+                else if(!g_showExitConfirm && !g_showSettingsMenu && !g_showAboutMenu && !g_showHowToPlayMenu && keyPressed->code == sf::Keyboard::Key::Escape){
                     g_showExitConfirm = true;
                 }
                 else if(g_showExitConfirm && keyPressed->code == sf::Keyboard::Key::Escape){
@@ -328,8 +442,21 @@ int main() {
 
             if(const auto* mouseMoved = event->getIf<sf::Event::MouseMoved>()){
                 sf::Vector2f menuMousePos(static_cast<float>(mouseMoved->position.x), static_cast<float>(mouseMoved->position.y));
-                if(g_showSettingsMenu){
+                if(g_showHowToPlayMenu){
+                    closeHTPButton.setColor(closeHTPButton.getGlobalBounds().contains(menuMousePos)
+                        ? sf::Color(180, 180, 180, 255) : sf::Color::White);
+                }
+                else if(g_showSettingsMenu){
                     closeSettingsButton.setColor(closeSettingsButton.getGlobalBounds().contains(menuMousePos)
+                        ? sf::Color(180, 180, 180, 255) : sf::Color::White);
+                    
+                    bool isHtpHovered = howToPlayButton.getGlobalBounds().contains(menuMousePos) || howToPlayLabel.getGlobalBounds().contains(menuMousePos);
+                    howToPlayButton.setColor(isHtpHovered ? sf::Color(180, 180, 180, 255) : sf::Color::White);
+                    howToPlayLabel.setFillColor(isHtpHovered ? sf::Color(180, 180, 180, 255) : sf::Color::White);
+
+                    settingsAboutButton.setColor(settingsAboutButton.getGlobalBounds().contains(menuMousePos)
+                        ? sf::Color(180, 180, 180, 255) : sf::Color::White);
+                    settingsExitButton.setColor(settingsExitButton.getGlobalBounds().contains(menuMousePos)
                         ? sf::Color(180, 180, 180, 255) : sf::Color::White);
                 } else if(g_showAboutMenu){
                     closeAboutButton.setColor(closeAboutButton.getGlobalBounds().contains(menuMousePos)
@@ -347,9 +474,22 @@ int main() {
             if(const auto* mousePressed = event->getIf<sf::Event::MouseButtonPressed>()){
                 if(mousePressed->button == sf::Mouse::Button::Left){
                     sf::Vector2f menuClickPos(static_cast<float>(mousePressed->position.x), static_cast<float>(mousePressed->position.y));
-                    if(g_showSettingsMenu){
-                        if(closeSettingsButton.getGlobalBounds().contains(menuClickPos)
-                           || !settingsPanel.getGlobalBounds().contains(menuClickPos)){
+                    if(g_showHowToPlayMenu){
+                        if(closeHTPButton.getGlobalBounds().contains(menuClickPos) || !htpPanel.getGlobalBounds().contains(menuClickPos)){
+                            g_showHowToPlayMenu = false;
+                        }
+                    }
+                    else if(g_showSettingsMenu){
+                        if(howToPlayButton.getGlobalBounds().contains(menuClickPos) || howToPlayLabel.getGlobalBounds().contains(menuClickPos)){
+                            g_showHowToPlayMenu = true;
+                        }
+                        else if(settingsAboutButton.getGlobalBounds().contains(menuClickPos)){
+                            g_showAboutMenu = true;
+                        }
+                        else if(settingsExitButton.getGlobalBounds().contains(menuClickPos)){
+                            g_showExitConfirm = true;
+                        }
+                        else if(closeSettingsButton.getGlobalBounds().contains(menuClickPos) || !settingsPanel.getGlobalBounds().contains(menuClickPos)){
                             g_showSettingsMenu = false;
                         }
                     }
@@ -422,16 +562,31 @@ int main() {
         window.draw(bgSprite);
 
         if(fontLoaded){
-            if(g_showSettingsMenu){
-                window.draw(settingsPanel);
-                window.draw(settingsTitle);
-                window.draw(closeSettingsButton);
+            // Always draw Title and Subtitle so they don't disappear in sub-menus
+            window.draw(gameTitleText);
+            window.draw(gameSubtitleText);
+
+            if(g_showHowToPlayMenu){
+                window.draw(htpPanel);
+                window.draw(htpTitle);
+                window.draw(htpBodyText);
+                window.draw(closeHTPButton);
             }
             else if(g_showAboutMenu){
                 window.draw(aboutPanel);
                 window.draw(aboutTitle);
                 window.draw(aboutBodyText);
                 window.draw(closeAboutButton);
+            }
+            else if(g_showSettingsMenu){
+                window.draw(settingsPanel);
+                window.draw(settingsTitle);
+                window.draw(closeSettingsButton);
+                
+                window.draw(howToPlayLabel);
+                window.draw(howToPlayButton);
+                window.draw(settingsAboutButton);
+                window.draw(settingsExitButton);
             }
             else {
                 window.draw(startButton);
