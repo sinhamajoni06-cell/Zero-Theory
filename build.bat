@@ -50,9 +50,7 @@ if %ERRORLEVEL% EQU 0 (
     echo =========================================
 
     echo Copying required DLLs into bin\ ...
-    xcopy /y /d "C:\msys64\ucrt64\bin\sfml-graphics-3.dll" bin\ >nul
-    xcopy /y /d "C:\msys64\ucrt64\bin\sfml-window-3.dll" bin\ >nul
-    xcopy /y /d "C:\msys64\ucrt64\bin\sfml-system-3.dll" bin\ >nul
+    xcopy /y /d "C:\msys64\ucrt64\bin\sfml-*.dll" bin\ >nul
     xcopy /y /d "C:\msys64\ucrt64\bin\libfreetype-6.dll" bin\ >nul
     xcopy /y /d "C:\msys64\ucrt64\bin\libgcc_s_seh-1.dll" bin\ >nul
     xcopy /y /d "C:\msys64\ucrt64\bin\libstdc++-6.dll" bin\ >nul
