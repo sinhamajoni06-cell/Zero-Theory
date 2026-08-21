@@ -15,6 +15,7 @@ A word finding game.
 - **Operating System**: *Windows* `10` or `11` (Recommended).
 - **Compiler**: [g++](https://www.msys2.org/) supporting at least `C++17` or more (standard). ~*added to your system's or user's PATH environment variable*.
 - **MSYS2 Environment**: Specifically installed at `C:\msys64\` using the *UCRT64* environment, as hardcoded in the script ***paths***.
+- **Step-by-Step Installation**: For g++ [Continue](https://github.com/sinhamajoni06-cell/Zero-Theory/edit/main/README.md#g-installation-and-setup)
 
 # Project Folder
 
@@ -31,3 +32,6 @@ A word finding game.
 ├── build.bat               # Main build script to execute on your system
 └── README.md
 ```
+
+### G++ Installation and Setup
+
