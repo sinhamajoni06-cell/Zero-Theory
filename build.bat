@@ -49,8 +49,9 @@ if %ERRORLEVEL% EQU 0 (
     echo Output: %OUTPUT%
     echo =========================================
 
-    echo Copying required DLLs into bin\ ...
-    xcopy /y /d "C:\msys64\ucrt64\bin\sfml-*.dll" bin\ >nul
+    echo Copying assets and required DLLs into bin\ ...
+    if not exist "bin\main\assets" xcopy /y /s /i /d "main\assets" "bin\main\assets" >nul
+    xcopy /y /d "C:\msys64\ucrt64\bin\*sfml*.dll" bin\ >nul
     xcopy /y /d "C:\msys64\ucrt64\bin\libfreetype-6.dll" bin\ >nul
     xcopy /y /d "C:\msys64\ucrt64\bin\libgcc_s_seh-1.dll" bin\ >nul
     xcopy /y /d "C:\msys64\ucrt64\bin\libstdc++-6.dll" bin\ >nul
@@ -59,7 +60,9 @@ if %ERRORLEVEL% EQU 0 (
     echo.
     echo Running Game...
     echo -----------------------------------------
-    %OUTPUT%
+    cd /d bin
+    game.exe
+    cd /d ..
     echo.
     echo Game exited with code %ERRORLEVEL%
     pause
