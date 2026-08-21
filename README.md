@@ -37,8 +37,12 @@ A word finding game.
 
 - Go to [msys2.org](https://www.msys2.org/) and Install G++. (**Recommended**: C++17)
 - double-click the downloaded `installer` and run it.
-- Keep the default destination path: `C:\msys64` as it is.
+- Keep the default destination path: `C:\msys64` as it is. 
+
+  <a href="https://www.msys2.org/"><img src="https://www.msys2.org/images/install-2-path-dark.png#gh-dark-mode-only" width="500" height="400" valign="middle"></a>
 - Once installed, launch **MSYS2 UCRT64** from your Start menu.
+
+  <a href="https://www.msys2.org/"><img src="https://www.msys2.org/images/install-4-terminal-dark.png#gh-dark-mode-only" width="500" height="400" valign="middle"></a>
 - In **MSYS2 terminal** to install *SFML* run this single command inside it-
   
   ```
