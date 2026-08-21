@@ -52,7 +52,7 @@ Zero-Theory-core/
   pacman -S mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-sfml
   ```
 - Now you have install `G++` and `SFML`, just run the ***build.bat*** file.
-- I will create `Game.exe` and other files and folders at-
+- It will create `Game.exe` and other files and folders at-
   ```
   Zero-Theory-core/
   └── bin/
