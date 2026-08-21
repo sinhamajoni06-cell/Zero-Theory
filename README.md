@@ -13,7 +13,7 @@ A word finding game.
 
 ## Requirements
 - **Operating System**: *Windows* `10` or `11` (Recommended).
-- **Compiler**: g++ supporting at least `C++17` or more (standard). ~*added to your system's or user's PATH environment variable*.
+- **Compiler**: [g++](https://www.msys2.org/) supporting at least `C++17` or more (standard). ~*added to your system's or user's PATH environment variable*.
 - **MSYS2 Environment**: Specifically installed at `C:\msys64\` using the *UCRT64* environment, as hardcoded in the script ***paths***.
 
 # Project Folder
