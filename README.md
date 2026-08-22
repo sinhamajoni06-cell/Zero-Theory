@@ -29,7 +29,6 @@ Zero-Theory-core/
   │       └── engine/
   │           └── NoTEngine.cpp # Main entry point file
   ├── main/                   # All Script and Additional files creates this automatically for output
-  ├── bin/                    # FreeType header files and libfreetype-6.dll inside the MSYS2 UCRT64 directory
   ├── build.bat               # Main build script to execute on your system
   └── README.md
 ```
