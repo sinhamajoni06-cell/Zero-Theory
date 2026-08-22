@@ -21,8 +21,6 @@ A word finding game.
 
 ```
 Zero-Theory-core/
-  ├── bin/
-  │   └── Game.exe            # The main Executable file, create after the compilation.
   ├── core/
   │   ├── lib/
   │   │   ├── header/         # Additional C++ headers
