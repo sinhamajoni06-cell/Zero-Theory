@@ -5,7 +5,7 @@ A word finding game.
 
 <table>
   <tr>
-    <td align="left"><b>Source Code</b>: <code>Zero-Theory-core.zip</code></td>
+    <td align="left"><b>Source Code</b>: <code>Zero-Theory-main.zip</code></td>
     <td align="right"><a href="https://github.com/sinhamajoni06-cell/Zero-Theory/archive/refs/heads/main.zip">Download</a></td>
   </tr>
 </table>
