@@ -49,10 +49,16 @@ Zero-Theory-core/
   pacman -S mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-sfml
   ```
 - Now you have install `G++` and `SFML`, just run the ***build.bat*** file.
-- It will create `Game.exe` and other files and folders at-
+- It will create `ZeroTheory.exe` and other files and folders at-
   ```
-  Zero-Theory-core/
-  └── bin/
-      └── Game.exe
+  ZeroTheory/
+  ├── ZeroTheory.exe         # This is the main exe game file, you need to run to play the game
+  ├── *sfml*.dll
+  ├── libfreetype-6.dll
+  ├── libgcc_s_seh-1.dll
+  ├── libstdc++-6.dll
+  ├── libwinpthread-1.dll
+  └── main/                  # All Games materials are in here
+      └── assets/
   ```
 
