@@ -10,7 +10,7 @@ echo =========================================
 set COMPILER=g++
 set CXX_STD=-std=c++17
 set FLAGS=-Wall -Wextra
-set OUTPUT=bin\game.exe
+set OUTPUT=ZeroTheory\ZeroTheory.exe
 
 :: A) Main Entry Point File
 set MAIN_FILE=core/src/engine/NoTEngine.cpp
@@ -31,7 +31,7 @@ set LIBS=-L C:/msys64/ucrt64/lib -lsfml-graphics -lsfml-window -lsfml-system -lo
 :: 2. BUILD PROCESS
 :: ======================================================
 
-if not exist bin mkdir bin
+if not exist ZeroTheory mkdir ZeroTheory
 
 echo [BUILDING] Compiling files...
 echo Main File : %MAIN_FILE%
@@ -49,19 +49,19 @@ if %ERRORLEVEL% EQU 0 (
     echo Output: %OUTPUT%
     echo =========================================
 
-    echo Copying assets and required DLLs into bin\ ...
-    if not exist "bin\main\assets" xcopy /y /s /i /d "main\assets" "bin\main\assets" >nul
-    xcopy /y /d "C:\msys64\ucrt64\bin\*sfml*.dll" bin\ >nul
-    xcopy /y /d "C:\msys64\ucrt64\bin\libfreetype-6.dll" bin\ >nul
-    xcopy /y /d "C:\msys64\ucrt64\bin\libgcc_s_seh-1.dll" bin\ >nul
-    xcopy /y /d "C:\msys64\ucrt64\bin\libstdc++-6.dll" bin\ >nul
-    xcopy /y /d "C:\msys64\ucrt64\bin\libwinpthread-1.dll" bin\ >nul
+    echo Copying assets and required DLLs into ZeroTheory\ ...
+    if not exist "ZeroTheory\main\assets" xcopy /y /s /i /d "main\assets" "ZeroTheory\main\assets" >nul
+    xcopy /y /d "C:\msys64\ucrt64\bin\*sfml*.dll" ZeroTheory\ >nul
+    xcopy /y /d "C:\msys64\ucrt64\bin\libfreetype-6.dll" ZeroTheory\ >nul
+    xcopy /y /d "C:\msys64\ucrt64\bin\libgcc_s_seh-1.dll" ZeroTheory\ >nul
+    xcopy /y /d "C:\msys64\ucrt64\bin\libstdc++-6.dll" ZeroTheory\ >nul
+    xcopy /y /d "C:\msys64\ucrt64\bin\libwinpthread-1.dll" ZeroTheory\ >nul
 
     echo.
     echo Running Game...
     echo -----------------------------------------
-    cd /d bin
-    game.exe
+    cd /d ZeroTheory
+    ZeroTheory.exe
     cd /d ..
     echo.
     echo Game exited with code %ERRORLEVEL%
@@ -72,4 +72,4 @@ if %ERRORLEVEL% EQU 0 (
     echo [ERROR] Build Failed! Fix errors above.
     echo =========================================
     pause
-) 
+)
