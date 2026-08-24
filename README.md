@@ -61,4 +61,11 @@ Zero-Theory-core/
   └── main/                  # All Games materials are in here
       └── assets/
   ```
-
+# Project type-
+- **Language**: `C/C++`
+- **Graphics**: `2D`
+- **Art Style**: `Pixel Art`
+- **Gameplay**: `Exploration`, `Combat`, `Word Finding`
+- **Combat**: `Melee` and `Range`
+- **Player count**: `3`
+- **Chapter**: `3`
