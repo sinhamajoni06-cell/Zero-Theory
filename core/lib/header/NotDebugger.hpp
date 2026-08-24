@@ -208,16 +208,15 @@ namespace NovaEngine::Debugger
     #define LOG_DIRECT(msg, severity) \
     NovaEngine::Debugger::NotDebugger::LogDirect(msg, severity)
 
-    #define LOG_FULL(msg, _sev, _cat, _tag) \
+    #define LOG_FULL(msg, _sev, _cat, _line) \
         do { \
             NovaEngine::Debugger::DebuggerEntry _e; \
             _e.message = msg; \
             _e.severity = _sev; \
             _e.category = _cat; \
-            _e.tag = _tag; \
             _e.file_name = __FILE__; \
             _e.function_name = __func__; \
-            _e.line_number = __LINE__; \
+            _e.line_number = _line; \
             NovaEngine::Debugger::NotDebugger::GetInstance().CreateEntry(_e); \
         } while(0)
 
