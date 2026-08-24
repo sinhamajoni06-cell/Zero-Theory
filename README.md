@@ -65,7 +65,7 @@ Zero-Theory-core/
   └── main/                  # All Games materials are in here
       └── assets/
   ```
-# Project type-
+# Project details-
 - **Language**: `C/C++`
 - **Graphics**: `2D`
 - **Art Style**: `Pixel Art`
