@@ -188,7 +188,7 @@ int main() {
     gameTitleText.setPosition({SCREEN_WIDTH / 2.f, 100.f});
 
     // Game Subtitle ("A word finding game.") - Uses Regular Font
-    sf::Text gameSubtitleText(font, "A word finding game.", 24);
+    sf::Text gameSubtitleText(font, "A Undesigned Game.", 24);
     gameSubtitleText.setFillColor(sf::Color(200, 200, 200, 255));
     sf::FloatRect gameSubtitleBounds = gameSubtitleText.getLocalBounds();
     gameSubtitleText.setOrigin({gameSubtitleBounds.size.x / 2.f, gameSubtitleBounds.size.y / 2.f + gameSubtitleBounds.position.y});
@@ -322,7 +322,7 @@ int main() {
     htpTitle.setOrigin({htpTitleBounds.size.x / 2.f, htpTitleBounds.size.y / 2.f + htpTitleBounds.position.y});
     htpTitle.setPosition({SCREEN_WIDTH / 2.f, SCREEN_HEIGHT / 2.f - panelHeight / 2.f + 40.f});
 
-    sf::Text htpBodyText(font, "1. Find hidden words on the screen.\n2. Connect letters to form valid words.\n3. Complete the target before time runs out!", 22);
+    sf::Text htpBodyText(font, "Work in progres!", 22);
     htpBodyText.setFillColor(sf::Color::White);
     sf::FloatRect htpBodyBounds = htpBodyText.getLocalBounds();
     htpBodyText.setOrigin({htpBodyBounds.size.x / 2.f, htpBodyBounds.size.y / 2.f + htpBodyBounds.position.y});
@@ -358,7 +358,7 @@ int main() {
         SCREEN_HEIGHT / 2.f - panelHeight / 2.f + 40.f
     });
 
-    sf::Text aboutBodyText(font, "Nova Text Game\nA psychological horror experience.\nVersion 0.1", 24);
+    sf::Text aboutBodyText(font, "ZeroTheory\nA Undesigned Game.\nVersion 0.1.0", 24);
     aboutBodyText.setFillColor(sf::Color::White);
     sf::FloatRect aboutBodyBounds = aboutBodyText.getLocalBounds();
     aboutBodyText.setOrigin({aboutBodyBounds.size.x / 2.f, aboutBodyBounds.size.y / 2.f + aboutBodyBounds.position.y});
