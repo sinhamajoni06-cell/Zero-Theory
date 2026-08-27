@@ -65,6 +65,14 @@ Zero-Theory-core/
   └── main/                  # All Games materials are in here
       └── assets/
   ```
+  # Development Worning-
+
+  - if you got an error then-
+  
+ <a href="https://www.msys2.org/"><img src="https://raw.githubusercontent.com/sinhamajoni06-cell/Zero-Theory/refs/heads/main/.README/Screenshot%202026-08-27%20161355.png" width="800" height="300" valign="middle"></a>
+
+- **then follow**-
+ 
 # Project details-
 - **Language**: `C/C++`
 - **Graphics**: `2D`
