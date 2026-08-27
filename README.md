@@ -79,6 +79,8 @@ Zero-Theory-core/
  <a href="https://www.msys2.org/"><img src="https://raw.githubusercontent.com/sinhamajoni06-cell/Zero-Theory/refs/heads/main/.README/Screenshot%202026-08-27%20163421.png" width="300" height="150" valign="middle"></a>
 
    - Go to the **Advanced** tab and click **Environment Variables**.
+     
+     <a href="https://www.msys2.org/"><img src="https://raw.githubusercontent.com/sinhamajoni06-cell/Zero-Theory/refs/heads/main/.README/Screenshot%202026-08-27%20180006.png" width="450" height="400" valign="middle"></a>
    - 
  
 # Project details-
