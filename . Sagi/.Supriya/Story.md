@@ -1,5 +1,15 @@
 # Zero Theory ~ Story
 
+text **Bold** *Italic* ***Ita-bol*** `Code`~cut~
+```
+Copy-code
+```
+[Link](https://github.com/sinhamajoni06-cell)
+![Title ~ dev only](https://l-malakar.github.io/LLOF/asset/Banner.svg)
+[![Title ~ dev only and Link redirection](https://l-malakar.github.io/LLOF/asset/Banner.svg)](https://l-malakar.github.io/LLOF/)
+
+<a href="https://l-malakar.github.io/LLOF/"><img src="https://l-malakar.github.io/LLOF/asset/logo.svg" width="120" height="120" valign="middle"></a>
+
 ## Chapter 1
 
 ## Chapter 2
