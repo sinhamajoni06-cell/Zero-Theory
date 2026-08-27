@@ -72,28 +72,28 @@ Zero-Theory-core/
 
   - if you got an error then-
   
- <a href="https://www.msys2.org/"><img src="https://raw.githubusercontent.com/sinhamajoni06-cell/Zero-Theory/refs/heads/main/.README/Screenshot%202026-08-27%20161355.png" width="800" height="300" valign="middle"></a>
+ <a href="https://github.com/sinhamajoni06-cell/Zero-Theory"><img src="https://raw.githubusercontent.com/sinhamajoni06-cell/Zero-Theory/refs/heads/main/.README/Screenshot%202026-08-27%20161355.png" width="800" height="300" valign="middle"></a>
 
 - **then follow**-
   - Press `Win` + `R`, and type 
  ```
  sysdm.cpl
  ```
- <a href="https://www.msys2.org/"><img src="https://raw.githubusercontent.com/sinhamajoni06-cell/Zero-Theory/refs/heads/main/.README/Screenshot%202026-08-27%20163421.png" width="300" height="150" valign="middle"></a>
+ <a href="https://github.com/sinhamajoni06-cell/Zero-Theory"><img src="https://raw.githubusercontent.com/sinhamajoni06-cell/Zero-Theory/refs/heads/main/.README/Screenshot%202026-08-27%20163421.png" width="300" height="150" valign="middle"></a>
 
    - Go to the **Advanced** tab and click **Environment Variables**.
      
-     <a href="https://www.msys2.org/"><img src="https://raw.githubusercontent.com/sinhamajoni06-cell/Zero-Theory/refs/heads/main/.README/Screenshot%202026-08-27%20180006.png" width="450" height="400" valign="middle"></a>
+     <a href="https://github.com/sinhamajoni06-cell/Zero-Theory"><img src="https://raw.githubusercontent.com/sinhamajoni06-cell/Zero-Theory/refs/heads/main/.README/Screenshot%202026-08-27%20180006.png" width="450" height="400" valign="middle"></a>
      
    - Under **User variables**, select `Path` and click **Edit**.\
 
-     <a href="https://www.msys2.org/"><img src="https://raw.githubusercontent.com/sinhamajoni06-cell/Zero-Theory/refs/heads/main/.README/Screenshot%202026-08-27%20180756.png" width="450" height="400" valign="middle"></a>
+     <a href="https://github.com/sinhamajoni06-cell/Zero-Theory"><img src="https://raw.githubusercontent.com/sinhamajoni06-cell/Zero-Theory/refs/heads/main/.README/Screenshot%202026-08-27%20180756.png" width="450" height="400" valign="middle"></a>
      
    - Click **New** and paste the folder path you copied. e.g.
      ```
      C:\msys64\ucrt64\bin
      ```
-     <a href="https://www.msys2.org/"><img src="http://raw.githubusercontent.com/sinhamajoni06-cell/Zero-Theory/refs/heads/main/.README/Screenshot%202026-08-27%20181615.png" width="450" height="400" valign="middle"></a>
+     <a href="https://github.com/sinhamajoni06-cell/Zero-Theory"><img src="http://raw.githubusercontent.com/sinhamajoni06-cell/Zero-Theory/refs/heads/main/.README/Screenshot%202026-08-27%20181615.png" width="450" height="400" valign="middle"></a>
 
      - Click **OK** on all open windows to `save` the changes.
 
