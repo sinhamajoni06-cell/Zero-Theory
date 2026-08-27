@@ -93,6 +93,15 @@ Zero-Theory-core/
      <a href="https://www.msys2.org/"><img src="http://raw.githubusercontent.com/sinhamajoni06-cell/Zero-Theory/refs/heads/main/.README/Screenshot%202026-08-27%20181615.png" width="450" height="400" valign="middle"></a>
 
      - Click **OK** on all open windows to `save` the changes.
+
+# Confirmation 
+* if you want to **check** that is it doing perfectly or not, Run-
+```
+g++ --version
+```
+in your `Terminal`.
+* Once the version number appears, re-run your build script.
+
  
 # Project details-
 - **Language**: `C/C++`
