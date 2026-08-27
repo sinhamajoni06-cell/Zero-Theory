@@ -76,7 +76,7 @@ Zero-Theory-core/
  ```
  sysdm.cpl
  ```
- 
+ <a href="https://www.msys2.org/"><img src="https://raw.githubusercontent.com/sinhamajoni06-cell/Zero-Theory/refs/heads/main/.README/Screenshot%202026-08-27%20163421.png" width="300" height="150" valign="middle"></a>
  
 # Project details-
 - **Language**: `C/C++`
