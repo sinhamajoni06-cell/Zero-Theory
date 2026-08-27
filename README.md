@@ -81,7 +81,15 @@ Zero-Theory-core/
    - Go to the **Advanced** tab and click **Environment Variables**.
      
      <a href="https://www.msys2.org/"><img src="https://raw.githubusercontent.com/sinhamajoni06-cell/Zero-Theory/refs/heads/main/.README/Screenshot%202026-08-27%20180006.png" width="450" height="400" valign="middle"></a>
-   - 
+     
+   - Under **User variables**, select `Path` and click **Edit**.\
+
+     <a href="https://www.msys2.org/"><img src="https://raw.githubusercontent.com/sinhamajoni06-cell/Zero-Theory/refs/heads/main/.README/Screenshot%202026-08-27%20180756.png" width="450" height="400" valign="middle"></a>
+     
+   - Click **New** and paste the folder path you copied. e.g.
+     ```
+     C:\msys64\ucrt64\bin
+     ```
  
 # Project details-
 - **Language**: `C/C++`
