@@ -102,11 +102,11 @@ Zero-Theory-core/
      - Click **OK** on all open windows to `save` the changes.
 
 # Confirmation 
-* if you want to **check** that is it doing perfectly or not, Run-
+* if you want to **check** that is it done perfectly or not, Run-
 ```
 g++ --version
 ```
-in your `Terminal`.
+in your `Terminal` **/** `cmd`.
 * Once the version number appears, re-run your build script.
 
  
