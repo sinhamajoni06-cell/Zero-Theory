@@ -1,6 +1,6 @@
 @echo off
 echo =========================================
-echo       Building C++ Game Engine...
+powershell -Command "'      Building', 'C++', 'Game', 'Engine ' | ForEach-Object { Write-Host -NoNewline (\"$_ \"); Start-Sleep -Milliseconds 250 }; '|','/','-','\','|','/','-','\','|','/','-','\' | ForEach-Object { Write-Host -NoNewline \"`b$_\" ; Start-Sleep -Milliseconds 160 }; Write-Host ''"
 echo =========================================
 
 :: ======================================================
@@ -31,7 +31,21 @@ set LIBS=-L C:/msys64/ucrt64/lib -lsfml-graphics -lsfml-window -lsfml-system -lo
 :: 2. BUILD PROCESS
 :: ======================================================
 
-if not exist ZeroTheory mkdir ZeroTheory
+if exist ZeroTheory goto CHECK_REBUILD
+mkdir ZeroTheory
+goto START_BUILD
+
+:CHECK_REBUILD
+echo.
+powershell -Command "'Do you want to Update / Rebuild your project? '.ToCharArray() | ForEach-Object { Write-Host -NoNewline -ForegroundColor Yellow $_; Start-Sleep -Milliseconds 40 }; '[Y/N]: '.ToCharArray() | ForEach-Object { Write-Host -NoNewline -ForegroundColor White $_; Start-Sleep -Milliseconds 40 }"
+set "CHOICE="
+set /p "CHOICE="
+if /i "%CHOICE%"=="Y" goto START_BUILD
+if /i "%CHOICE%"=="N" exit /b
+powershell -Command "Write-Host '[Error] ' -ForegroundColor Red -NoNewline; Write-Host 'Try again!'"
+goto CHECK_REBUILD
+
+:START_BUILD
 
 echo [BUILDING] Compiling files...
 echo Main File : %MAIN_FILE%
