@@ -37,7 +37,8 @@ Zero-Theory-core/
   │           └── NoTEngine.cpp # Main entry point file
   ├── main/                   # All Script and Additional files creates this automatically for output
   ├── build.bat               # Main build script to execute on your system
-  └── README.md
+  ├── .README/                # All the other elements for README.md file
+  └── README.md               
 ```
 ---
 ## G++ Installation and Setup
