@@ -7,7 +7,7 @@ echo =========================================
 :: 1. SETTINGS & PATHS
 :: ======================================================
 
-set COMPILER=g++
+set COMPILER=g++.exe
 set CXX_STD=-std=c++17
 set FLAGS=-Wall -Wextra
 set OUTPUT=ZeroTheory\ZeroTheory.exe
@@ -51,7 +51,7 @@ echo [BUILDING] Compiling files...
 echo Main File : %MAIN_FILE%
 echo ----------------------------------------------------
 
-%COMPILER% %CXX_STD% %FLAGS% %INCLUDES% -D_NOTDEBUG %MAIN_FILE% %SOURCES% %LIBS% -o %OUTPUT%
+powershell -Command "$src = (Resolve-Path '%SOURCES%' | ForEach-Object { $_.Path }); $allArgs = @('%CXX_STD%'.Split(' ')) + @('%FLAGS%'.Split(' ')) + @('%INCLUDES%'.Split(' ')) + @('-D_NOTDEBUG','%MAIN_FILE%') + $src + @('%LIBS%'.Split(' ')) + @('-o','%OUTPUT%'); $wd = (Get-Location).Path; $job = Start-Job -ScriptBlock { param($exe,$jargs,$dir) Set-Location $dir; & $exe @jargs 2>&1 } -ArgumentList '%COMPILER%', $allArgs, $wd; $pct=0; while ($job.State -eq 'Running') { if ($pct -lt 99) { $pct++ }; $filled = [Math]::Floor($pct/10); $bar = ('#' * $filled) + ('-' * (10-$filled)); Write-Host -NoNewline (\"`r[BUILDING] [$bar] $pct%%   \"); Start-Sleep -Milliseconds 120 }; $result = Receive-Job -Job $job -Wait; Remove-Job -Job $job; if ($job.State -eq 'Completed' -and ($result -join \"`n\") -notmatch 'error:') { Write-Host (\"`r[BUILDING] [##########] 100%%   \") } else { Write-Host \"`r[BUILDING] [FAILED] Compilation failed!                  \"; $result | ForEach-Object { Write-Host $_ }; exit 1 }"
 
 :: ======================================================
 :: 3. RESULT & AUTO-RUN
