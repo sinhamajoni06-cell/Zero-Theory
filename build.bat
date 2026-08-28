@@ -56,34 +56,47 @@ echo ----------------------------------------------------
 :: ======================================================
 :: 3. RESULT & AUTO-RUN
 :: ======================================================
-if %ERRORLEVEL% EQU 0 (
-    echo.
-    echo =========================================
-    echo [SUCCESS] Game built successfully!
-    echo Output: %OUTPUT%
-    echo =========================================
+if %ERRORLEVEL% NEQ 0 goto BUILD_FAILED
 
-    echo Copying assets and required DLLs into ZeroTheory\ ...
-    if not exist "ZeroTheory\main\assets" xcopy /y /s /i /d "main\assets" "ZeroTheory\main\assets" >nul
-    xcopy /y /d "C:\msys64\ucrt64\bin\*sfml*.dll" ZeroTheory\ >nul
-    xcopy /y /d "C:\msys64\ucrt64\bin\libfreetype-6.dll" ZeroTheory\ >nul
-    xcopy /y /d "C:\msys64\ucrt64\bin\libgcc_s_seh-1.dll" ZeroTheory\ >nul
-    xcopy /y /d "C:\msys64\ucrt64\bin\libstdc++-6.dll" ZeroTheory\ >nul
-    xcopy /y /d "C:\msys64\ucrt64\bin\libwinpthread-1.dll" ZeroTheory\ >nul
+echo.
+echo =========================================
+echo [SUCCESS] Game built successfully!
+echo Output: %OUTPUT%
+echo =========================================
 
-    echo.
-    echo Running Game...
-    echo -----------------------------------------
-    cd /d ZeroTheory
-    ZeroTheory.exe
-    cd /d ..
-    echo.
-    echo Game exited with code %ERRORLEVEL%
-    pause
-) else (
-    echo.
-    echo =========================================
-    echo [ERROR] Build Failed! Fix errors above.
-    echo =========================================
-    pause
-)
+echo Copying assets and required DLLs into ZeroTheory\ ...
+if not exist "ZeroTheory\main\assets" xcopy /y /s /i /d "main\assets" "ZeroTheory\main\assets" >nul
+xcopy /y /d "C:\msys64\ucrt64\bin\*sfml*.dll" ZeroTheory\ >nul
+xcopy /y /d "C:\msys64\ucrt64\bin\libfreetype-6.dll" ZeroTheory\ >nul
+xcopy /y /d "C:\msys64\ucrt64\bin\libgcc_s_seh-1.dll" ZeroTheory\ >nul
+xcopy /y /d "C:\msys64\ucrt64\bin\libstdc++-6.dll" ZeroTheory\ >nul
+xcopy /y /d "C:\msys64\ucrt64\bin\libwinpthread-1.dll" ZeroTheory\ >nul
+
+:CHECK_LAUNCH
+echo.
+powershell -Command "'Do you want to Launch the game now? '.ToCharArray() | ForEach-Object { Write-Host -NoNewline -ForegroundColor Yellow $_; Start-Sleep -Milliseconds 40 }; '[Y/N]: '.ToCharArray() | ForEach-Object { Write-Host -NoNewline -ForegroundColor White $_; Start-Sleep -Milliseconds 40 }"
+set "LAUNCH_CHOICE="
+set /p "LAUNCH_CHOICE="
+if /i "%LAUNCH_CHOICE%"=="Y" goto RUN_GAME
+if /i "%LAUNCH_CHOICE%"=="N" exit /b
+powershell -Command "Write-Host '[Error] ' -ForegroundColor Red -NoNewline; Write-Host 'Try again!'"
+goto CHECK_LAUNCH
+
+:RUN_GAME
+echo.
+echo Running Game...
+echo -----------------------------------------
+cd /d ZeroTheory
+ZeroTheory.exe
+cd /d ..
+echo.
+echo Game exited with code %ERRORLEVEL%
+pause
+exit /b
+
+:BUILD_FAILED
+echo.
+echo =========================================
+echo [ERROR] Build Failed! Fix errors above.
+echo =========================================
+pause
