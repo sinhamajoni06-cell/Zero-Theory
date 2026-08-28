@@ -101,7 +101,7 @@ Zero-Theory-core/
 
      - Click **OK** on all open windows to `save` the changes.
 
-# Confirmation 
+## Confirmation 
 * if you want to **check** that is it done perfectly or not, Run-
 ```
 g++ --version
