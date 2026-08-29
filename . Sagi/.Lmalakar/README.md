@@ -1,4 +1,4 @@
-# Hi I am Lmalakar-
+# Hi I am [<img src="https://avatars.githubusercontent.com/u/261390550?v=4&size=30" width="30" valign="center" /> Lmalakar](https://github.com/L-Malakar/)
 
 **About**- I am working with the games make code base and manageing the `UI` **/** `GUI` elementes.
 
