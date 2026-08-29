@@ -1,9 +1,23 @@
 # Zero-Theory
 
-text **Bold** *Italic* ***Ita-bol*** `Code`~cut~
+text 
+
+**Bold**
+
+*Italic*
+
+***Ita-bol***
+
+`Code`
+
+~cut~
+
 ```
 Copy-code
 ```
+
+[Link](https://github.com/sinhamajoni06-cell)
+
 - 1st
   - 1.1
   - 1.2
@@ -11,7 +25,6 @@ Copy-code
 - 3rd
 
   
-[Link](https://github.com/sinhamajoni06-cell)
 ![Title ~ dev only](https://l-malakar.github.io/LLOF/asset/Banner.svg) <br>
 ---
 [![Title ~ dev only and Link redirection](https://l-malakar.github.io/LLOF/asset/Banner.svg)](https://l-malakar.github.io/LLOF/)
