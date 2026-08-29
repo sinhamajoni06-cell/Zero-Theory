@@ -118,3 +118,6 @@ in your `Terminal` **/** `cmd`.
 - **Combat**: `Melee` and `Range`
 - **Player count**: `3`
 - **Chapter**: `3`
+- **Game**-
+  - **Version**- `v0.1.0`
+  - **Name**- `Zero Theory`
