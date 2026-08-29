@@ -1,5 +1,5 @@
 # Zero-Theory
-A word finding game.
+A undesigned game.
 
 # Download
 
