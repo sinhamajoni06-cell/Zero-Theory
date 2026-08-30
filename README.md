@@ -30,14 +30,16 @@ A undesigned game.
 Zero-Theory-core/
   ├── core/
   │   ├── lib/
-  │   │   ├── header/         # Additional C++ headers
-  │   │   └── cpp/            # Must contain at least one .cpp file
+  │   │   ├── header/              # Additional C++ headers
+  │   │   └── cpp/                 # Must contain at least one .cpp file
   │   └── src/
+  │       ├── editor/
+  │       │   └── zero_map.cpp     # Map creator and editor
   │       └── engine/
-  │           └── NoTEngine.cpp # Main entry point file
-  ├── main/                   # All Script and Additional files creates this automatically for output
-  ├── build.bat               # Main build script to execute on your system
-  ├── .README/                # All the other elements for README.md file
+  │           └── NoTEngine.cpp    # Main entry point file
+  ├── main/                        # All Script and Additional files creates this automatically for output
+  ├── build.bat                    # Main build script to execute on your system
+  ├── .README/                     # All the other elements for README.md file
   └── README.md               
 ```
 ---
