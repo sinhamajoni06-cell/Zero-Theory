@@ -539,6 +539,9 @@ int main() {
                 else if(g_showAboutMenu && keyPressed->code == sf::Keyboard::Key::Escape){
                     g_showAboutMenu = false;
                 }
+                else if(g_showNotReady && keyPressed->code == sf::Keyboard::Key::Escape){
+                    g_showNotReady = false;
+                }
                 else if(!g_showExitConfirm && !g_showSettingsMenu && !g_showAboutMenu && !g_showHowToPlayMenu && keyPressed->code == sf::Keyboard::Key::Escape){
                     g_showExitConfirm = true;
                 }
