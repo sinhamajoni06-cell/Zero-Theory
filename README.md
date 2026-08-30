@@ -91,7 +91,7 @@ Zero-Theory-core/
      
      <a href="https://github.com/sinhamajoni06-cell/Zero-Theory"><img src="https://raw.githubusercontent.com/sinhamajoni06-cell/Zero-Theory/refs/heads/main/.README/Screenshot%202026-08-27%20180006.png" width="450" height="400" valign="middle"></a>
      
-   - Under **User variables**, select `Path` and click **Edit**.\
+   - Under **User variables**, select `Path` and click **Edit**.
 
      <a href="https://github.com/sinhamajoni06-cell/Zero-Theory"><img src="https://raw.githubusercontent.com/sinhamajoni06-cell/Zero-Theory/refs/heads/main/.README/Screenshot%202026-08-27%20180756.png" width="450" height="400" valign="middle"></a>
      
