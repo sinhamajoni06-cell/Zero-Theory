@@ -25,6 +25,7 @@
 #include <cmath>
 #include <iostream>
 #include <optional>
+#include <filesystem>
 
 // ----------------------------------------------------------
 // Data model
@@ -196,31 +197,370 @@ bool PointInObject(const MapObject& obj, sf::Vector2f point) {
 int main() {
     const unsigned int WINDOW_WIDTH = 1280;
     const unsigned int WINDOW_HEIGHT = 720;
-    const std::string SAVE_PATH = "map.json";
     const float GRID_SIZE = 40.f;
 
     sf::RenderWindow window(sf::VideoMode({WINDOW_WIDTH, WINDOW_HEIGHT}), "Zero Theory - Map Editor");
     window.setFramerateLimit(60);
 
+    sf::Font uiFont;
+    bool uiFontLoaded = uiFont.openFromFile("main/assets/fonts/VT323-Regular.ttf");
+
+    sf::Font titleFont;
+    bool titleFontLoaded = titleFont.openFromFile("main/assets/fonts/Honk-Regular-VariableFont_MORF,SHLN.ttf");
+    if (!titleFontLoaded) titleFontLoaded = false; // fallback handled at draw time
+
+    sf::Texture arrowIconTexture;
+    bool arrowIconLoaded = arrowIconTexture.loadFromFile("main/assets/images/UI/icons/icon_more_white.png");
+
+    // ---------------------------------------------------
+    // HOME PAGE (project browser + creation)
+    // ---------------------------------------------------
+    std::filesystem::create_directories("main/assets/map");
+
+    struct ProjectEntry {
+        std::string name;
+        uintmax_t sizeBytes = 0;
+    };
+
+    auto scanProjects = [&]() -> std::vector<ProjectEntry> {
+        std::vector<ProjectEntry> found;
+        for (const auto& entry : std::filesystem::directory_iterator("main/assets/map")) {
+            if (!entry.is_directory()) continue;
+            ProjectEntry p;
+            p.name = entry.path().filename().string();
+            std::filesystem::path mapFile = entry.path() / "map.json";
+            if (std::filesystem::exists(mapFile)) {
+                p.sizeBytes = std::filesystem::file_size(mapFile);
+            }
+            found.push_back(p);
+        }
+        return found;
+    };
+
+    auto formatSize = [](uintmax_t bytes) -> std::string {
+        if (bytes < 1024) return std::to_string(bytes) + " B";
+        double kb = bytes / 1024.0;
+        if (kb < 1024.0) {
+            std::ostringstream oss;
+            oss.precision(1);
+            oss << std::fixed << kb << " KB";
+            return oss.str();
+        }
+        std::ostringstream oss;
+        oss.precision(1);
+        oss << std::fixed << (kb / 1024.0) << " MB";
+        return oss.str();
+    };
+
+    std::vector<ProjectEntry> projects = scanProjects();
+
+    std::string projectName;
+    bool typingStarted = false;
+    bool enteringName = false;   // true while typing a new project name
+    bool creatingProject = true; // true while on the home page
+    int selectedIndex = 0;       // 0 = "Create New +", 1..N = existing projects
+    bool isNewProjectCreation = false; // true only when finalizing a brand-new project
+    int lastClickedIndex = -1;
+    sf::Clock doubleClickClock;
+    const float DOUBLE_CLICK_MS = 350.f;
+
+    const std::string howToUseText =
+        "HOW TO USE\n"
+        "\n"
+        "-- Getting Started --\n"
+        "Select a project from the list on the\n"
+        "left, or create a new one. Each project\n"
+        "is saved as its own map.json file.\n"
+        "\n"
+        "-- Controls --\n"
+        "Left Click     Place / Select & Drag\n"
+        "Right Click    Delete object\n"
+        "Middle Mouse   Pan camera\n"
+        "Mouse Wheel    Zoom in / out\n"
+        "1 - 4          Choose object type\n"
+        "G              Toggle grid snapping\n"
+        "R              Rotate selected object\n"
+        "[  /  ]        Shrink / Grow selected\n"
+        "Delete         Remove selected object\n"
+        "Ctrl + S       Save map\n"
+        "Ctrl + O       Load map\n"
+        "Escape         Deselect\n"
+        "\n"
+        "-- Tips --\n"
+        "Enable grid snapping while blocking\n"
+        "out a level, disable it for fine detail\n"
+        "placement. Save often with Ctrl+S.\n"
+        "\n"
+        "-- Workflow --\n"
+        "1. Create or open a project\n"
+        "2. Place and arrange objects\n"
+        "3. Save your map\n"
+        "4. Load it back into the Game Engine";
+
+    while (window.isOpen() && creatingProject) {
+        while (const auto event = window.pollEvent()) {
+            if (event->is<sf::Event::Closed>()) {
+                window.close();
+            }
+
+            if (enteringName) {
+                if (const auto* textEntered = event->getIf<sf::Event::TextEntered>()) {
+                    char32_t unicode = textEntered->unicode;
+                    if (unicode == 8) { // Backspace
+                        if (!projectName.empty()) projectName.pop_back();
+                        typingStarted = true;
+                    }
+                    else if (unicode >= 32 && unicode < 127) {
+                        if (!typingStarted) {
+                            projectName.clear();
+                            typingStarted = true;
+                        }
+                        if (projectName.size() < 40) {
+                            projectName += static_cast<char>(unicode);
+                        }
+                    }
+                }
+                if (const auto* keyPressed = event->getIf<sf::Event::KeyPressed>()) {
+                    if (keyPressed->code == sf::Keyboard::Key::Enter) {
+                        if (projectName.empty()) projectName = "New Project";
+                        isNewProjectCreation = true;
+                        creatingProject = false;
+                    }
+                    else if (keyPressed->code == sf::Keyboard::Key::Escape) {
+                        enteringName = false;
+                        typingStarted = false;
+                        projectName.clear();
+                    }
+                }
+            }
+            else {
+                if (const auto* keyPressed = event->getIf<sf::Event::KeyPressed>()) {
+                    int itemCount = static_cast<int>(projects.size()) + 1; // +1 for "Create New"
+                    if (keyPressed->code == sf::Keyboard::Key::Up) {
+                        selectedIndex = (selectedIndex - 1 + itemCount) % itemCount;
+                    }
+                    else if (keyPressed->code == sf::Keyboard::Key::Down) {
+                        selectedIndex = (selectedIndex + 1) % itemCount;
+                    }
+                    else if (keyPressed->code == sf::Keyboard::Key::Enter) {
+                        if (selectedIndex == 0) {
+                            enteringName = true;
+                            typingStarted = false;
+                            projectName = "New Project";
+                        } else {
+                            projectName = projects[selectedIndex - 1].name;
+                            creatingProject = false;
+                        }
+                    }
+                }
+
+                if (const auto* mousePressed = event->getIf<sf::Event::MouseButtonPressed>()) {
+                    if (mousePressed->button == sf::Mouse::Button::Left) {
+                        sf::Vector2f mousePos = window.mapPixelToCoords(mousePressed->position, window.getDefaultView());
+                        float dividerX = WINDOW_WIDTH * 0.62f;
+
+                        if (projects.empty()) {
+                            sf::FloatRect cardBounds({dividerX / 2.f - 160.f, WINDOW_HEIGHT / 2.f - 50.f}, {320.f, 100.f});
+                            if (cardBounds.contains(mousePos)) {
+                                bool isDoubleClick = (lastClickedIndex == 0 && doubleClickClock.getElapsedTime().asMilliseconds() < DOUBLE_CLICK_MS);
+                                doubleClickClock.restart();
+                                lastClickedIndex = 0;
+                                if (isDoubleClick) {
+                                    enteringName = true;
+                                    typingStarted = false;
+                                    projectName = "New Project";
+                                    lastClickedIndex = -1;
+                                }
+                            }
+                        } else {
+                            float listX = 40.f;
+                            float listY = 110.f;
+                            float rowHeight = 56.f;
+
+                            for (int i = -1; i < static_cast<int>(projects.size()); ++i) {
+                                int itemIndex = i + 1;
+                                float y = listY + itemIndex * rowHeight;
+                                sf::FloatRect rowBounds({listX, y}, {dividerX - 60.f, rowHeight - 8.f});
+                                if (rowBounds.contains(mousePos)) {
+                                    selectedIndex = itemIndex;
+
+                                    bool isDoubleClick = (lastClickedIndex == itemIndex && doubleClickClock.getElapsedTime().asMilliseconds() < DOUBLE_CLICK_MS);
+                                    doubleClickClock.restart();
+                                    lastClickedIndex = itemIndex;
+
+                                    if (isDoubleClick) {
+                                        if (i == -1) {
+                                            enteringName = true;
+                                            typingStarted = false;
+                                            projectName = "New Project";
+                                        } else {
+                                            projectName = projects[i].name;
+                                            creatingProject = false;
+                                        }
+                                        lastClickedIndex = -1;
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        window.clear(sf::Color(20, 20, 24));
+
+        // ---- Top-left title ----
+        if (titleFontLoaded) {
+            sf::Text title(titleFont, "Zero Theory - Map Editor", 32);
+            title.setFillColor(sf::Color::White);
+            title.setPosition({24.f, 18.f});
+            window.draw(title);
+        } else if (uiFontLoaded) {
+            sf::Text title(uiFont, "Zero Theory - Map Editor", 32);
+            title.setFillColor(sf::Color::White);
+            title.setPosition({24.f, 18.f});
+            window.draw(title);
+        }
+
+        float dividerX = WINDOW_WIDTH * 0.62f;
+
+        if (uiFontLoaded) {
+            if (enteringName) {
+                // ---- Name entry overlay ----
+                sf::RectangleShape card({480.f, 90.f});
+                card.setFillColor(sf::Color(38, 38, 44));
+                card.setOutlineThickness(2.f);
+                card.setOutlineColor(sf::Color(90, 90, 240));
+                card.setPosition({dividerX / 2.f - 240.f, WINDOW_HEIGHT / 2.f - 45.f});
+                window.draw(card);
+
+                sf::Text label(uiFont, "Project Name", 18);
+                label.setFillColor(sf::Color(150, 150, 160));
+                label.setPosition({dividerX / 2.f - 220.f, WINDOW_HEIGHT / 2.f - 35.f});
+                window.draw(label);
+
+                sf::Text nameText(uiFont, projectName + "_", 28);
+                nameText.setFillColor(sf::Color::White);
+                nameText.setPosition({dividerX / 2.f - 220.f, WINDOW_HEIGHT / 2.f - 10.f});
+                window.draw(nameText);
+
+                sf::Text hint(uiFont, "Press Enter to create, Esc to cancel", 16);
+                hint.setFillColor(sf::Color(130, 130, 140));
+                hint.setPosition({dividerX / 2.f - hint.getLocalBounds().size.x / 2.f, WINDOW_HEIGHT / 2.f + 65.f});
+                window.draw(hint);
+            }
+            else if (projects.empty()) {
+                // ---- No projects: centered "Create New +" box ----
+                sf::RectangleShape card({320.f, 100.f});
+                card.setFillColor(sf::Color(34, 34, 40));
+                card.setOutlineThickness(2.f);
+                card.setOutlineColor(sf::Color(90, 90, 240));
+                card.setPosition({dividerX / 2.f - 160.f, WINDOW_HEIGHT / 2.f - 50.f});
+                window.draw(card);
+
+                sf::Text plus(uiFont, "Create New +", 28);
+                plus.setFillColor(sf::Color::White);
+                plus.setPosition({dividerX / 2.f - plus.getLocalBounds().size.x / 2.f, WINDOW_HEIGHT / 2.f - 18.f});
+                window.draw(plus);
+
+                sf::Text hint(uiFont, "Press Enter to start a new project", 16);
+                hint.setFillColor(sf::Color(130, 130, 140));
+                hint.setPosition({dividerX / 2.f - hint.getLocalBounds().size.x / 2.f, WINDOW_HEIGHT / 2.f + 60.f});
+                window.draw(hint);
+            }
+            else {
+                // ---- Project list ----
+                float listX = 40.f;
+                float listY = 110.f;
+                float rowHeight = 56.f;
+
+                for (int i = -1; i < static_cast<int>(projects.size()); ++i) {
+                    int itemIndex = i + 1; // 0 = Create New, 1..N = projects
+                    float y = listY + itemIndex * rowHeight;
+
+                    sf::RectangleShape row({dividerX - 60.f, rowHeight - 8.f});
+                    row.setPosition({listX, y});
+                    bool isSelected = (selectedIndex == itemIndex);
+                    row.setFillColor(isSelected ? sf::Color(50, 50, 90) : sf::Color(32, 32, 38));
+                    if (isSelected) {
+                        row.setOutlineThickness(2.f);
+                        row.setOutlineColor(sf::Color(90, 90, 240));
+                    }
+                    window.draw(row);
+
+                    if (i == -1) {
+                        sf::Text plus(uiFont, "Create New +", 22);
+                        plus.setFillColor(sf::Color::White);
+                        plus.setPosition({listX + 16.f, y + 12.f});
+                        window.draw(plus);
+                    } else {
+                        const ProjectEntry& p = projects[i];
+                        sf::Text nameText(uiFont, p.name, 22);
+                        nameText.setFillColor(sf::Color::White);
+                        nameText.setPosition({listX + 16.f, y + 6.f});
+                        window.draw(nameText);
+
+                        sf::Text sizeText(uiFont, formatSize(p.sizeBytes), 14);
+                        sizeText.setFillColor(sf::Color(150, 150, 160));
+                        sizeText.setPosition({listX + 16.f, y + 30.f});
+                        window.draw(sizeText);
+
+                        if (arrowIconLoaded) {
+                            sf::Sprite arrowSprite(arrowIconTexture);
+                            sf::Vector2u texSize = arrowIconTexture.getSize();
+                            float iconSize = 24.f;
+                            float scale = (texSize.x > 0) ? (iconSize / static_cast<float>(texSize.x)) : 1.f;
+                            arrowSprite.setScale({scale, scale});
+                            arrowSprite.setPosition({listX + (dividerX - 60.f) - iconSize - 16.f, y + (rowHeight - 8.f) / 2.f - iconSize / 2.f});
+                            window.draw(arrowSprite);
+                        }
+                    }
+                }
+            }
+
+            // ---- Right divider panel: How To Use ----
+            sf::RectangleShape divider({2.f, static_cast<float>(WINDOW_HEIGHT)});
+            divider.setPosition({dividerX, 0.f});
+            divider.setFillColor(sf::Color(60, 60, 66));
+            window.draw(divider);
+
+            sf::Text howTo(uiFont, howToUseText, 16);
+            howTo.setFillColor(sf::Color(210, 210, 215));
+            howTo.setPosition({dividerX + 30.f, 30.f});
+            howTo.setLineSpacing(1.2f);
+            window.draw(howTo);
+        }
+
+        window.display();
+    }
+
+    if (!window.isOpen()) return 0;
+
+    if (isNewProjectCreation) {
+        std::string baseName = projectName;
+        std::string finalName = baseName;
+        int suffix = 1;
+        while (std::filesystem::exists("main/assets/map/" + finalName)) {
+            finalName = baseName + " (L" + std::to_string(suffix) + ")";
+            suffix++;
+        }
+        projectName = finalName;
+    }
+
+    std::filesystem::create_directories("main/assets/map/" + projectName);
+    const std::string SAVE_PATH = "main/assets/map/" + projectName + "/map.json";
+
     sf::View camera(sf::FloatRect({0.f, 0.f}, {static_cast<float>(WINDOW_WIDTH), static_cast<float>(WINDOW_HEIGHT)}));
     window.setView(camera);
-
-    sf::Font font;
-    bool fontLoaded = font.openFromFile("main/assets/fonts/VT323-Regular.ttf");
-    if (!fontLoaded) {
-        std::cerr << "[MapEditor] Warning: failed to load font. UI text will not be shown." << std::endl;
-    }
 
     std::vector<MapObject> objects;
     ObjectType currentType = ObjectType::Block;
     bool snapEnabled = true;
-    int selectedIndex = -1;
+    selectedIndex = -1;
     bool draggingObject = false;
     bool panningCamera = false;
     sf::Vector2i lastMousePixel;
-
-    sf::Text hudText(font, "", 16);
-    hudText.setFillColor(sf::Color::White);
 
     while (window.isOpen()) {
         while (const auto event = window.pollEvent()) {
@@ -349,32 +689,6 @@ int main() {
         // ---- Draw ----
         window.clear(sf::Color(30, 30, 34));
 
-        // Grid
-        {
-            sf::Vector2f viewCenter = camera.getCenter();
-            sf::Vector2f viewSize = camera.getSize();
-            float left = viewCenter.x - viewSize.x / 2.f;
-            float right = viewCenter.x + viewSize.x / 2.f;
-            float top = viewCenter.y - viewSize.y / 2.f;
-            float bottom = viewCenter.y + viewSize.y / 2.f;
-
-            float startX = std::floor(left / GRID_SIZE) * GRID_SIZE;
-            float startY = std::floor(top / GRID_SIZE) * GRID_SIZE;
-
-            sf::VertexArray gridLines(sf::PrimitiveType::Lines);
-            sf::Color gridColor(60, 60, 66);
-
-            for (float gx = startX; gx <= right; gx += GRID_SIZE) {
-                gridLines.append(sf::Vertex{{gx, top}, gridColor});
-                gridLines.append(sf::Vertex{{gx, bottom}, gridColor});
-            }
-            for (float gy = startY; gy <= bottom; gy += GRID_SIZE) {
-                gridLines.append(sf::Vertex{{left, gy}, gridColor});
-                gridLines.append(sf::Vertex{{right, gy}, gridColor});
-            }
-            window.draw(gridLines);
-        }
-
         // Objects
         for (int i = 0; i < static_cast<int>(objects.size()); ++i) {
             sf::RectangleShape shape = MakeShapeForObject(objects[i]);
@@ -383,25 +697,6 @@ int main() {
                 shape.setOutlineColor(sf::Color::White);
             }
             window.draw(shape);
-        }
-
-        // HUD (drawn in default view so it doesn't pan/zoom with the camera)
-        if (fontLoaded) {
-            window.setView(window.getDefaultView());
-
-            std::ostringstream hud;
-            hud << "Tool: " << ObjectTypeToString(currentType)
-                << "   Snap: " << (snapEnabled ? "ON" : "OFF")
-                << "   Objects: " << objects.size()
-                << "   Selected: " << (selectedIndex == -1 ? "none" : std::to_string(selectedIndex))
-                << "\n1-4 Select Type | LClick Place/Move | RClick Delete | MMB Pan | Wheel Zoom"
-                << "\nR Rotate | [ ] Resize | Del Remove | Ctrl+S Save | Ctrl+O Load | Esc Deselect";
-
-            hudText.setString(hud.str());
-            hudText.setPosition({10.f, 10.f});
-            window.draw(hudText);
-
-            window.setView(camera);
         }
 
         window.display();
