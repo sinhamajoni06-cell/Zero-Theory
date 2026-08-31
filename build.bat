@@ -107,6 +107,7 @@ echo =========================================
 
 echo Copying assets and required DLLs into ZeroTheory\ ...
 if not exist "ZeroTheory\main\assets" xcopy /y /s /i /d "main\assets" "ZeroTheory\main\assets" >nul
+if not exist "ZeroTheory\main\assets\map" mkdir "ZeroTheory\main\assets\map"
 xcopy /y /d "C:\msys64\ucrt64\bin\*sfml*.dll" ZeroTheory\ >nul
 xcopy /y /d "C:\msys64\ucrt64\bin\libfreetype-6.dll" ZeroTheory\ >nul
 xcopy /y /d "C:\msys64\ucrt64\bin\libgcc_s_seh-1.dll" ZeroTheory\ >nul
