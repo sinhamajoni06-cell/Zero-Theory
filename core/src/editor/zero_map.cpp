@@ -3,191 +3,74 @@
 //  A lightweight, Geometry-Dash-style level editor.
 //
 //  Controls:
-//    Left Click        -> Place object (or select/drag existing object)
-//    Right Click        -> Delete object under cursor
-//    Middle Mouse Drag  -> Pan camera
-//    Mouse Wheel        -> Zoom in/out
-//    1 - 4              -> Choose object type (Block / Spike / Platform / Coin)
-//    G                  -> Toggle grid snapping
-//    R                  -> Rotate selected object (+15 deg)
-//    [ / ]              -> Shrink / Grow selected object
-//    Delete / Backspace -> Delete selected object
-//    Ctrl + S           -> Save map to JSON
-//    Ctrl + O           -> Load map from JSON
-//    Escape             -> Deselect current object
+//    Left Click          -> Place object / select (click empty = new object)
+//    Shift + Left Click  -> Add/remove object under cursor from selection
+//    Left Click + Drag   -> Box-select (on empty space) or move selection
+//    Right Click         -> Delete object under cursor
+//    Middle Mouse Drag   -> Pan camera
+//    Mouse Wheel         -> Zoom in/out
+//    1 - 4               -> Choose object type (Block / Spike / Platform / Coin)
+//    G                   -> Toggle grid snapping
+//    R                   -> Rotate selection (+15 deg)
+//    [ / ]               -> Shrink / Grow selection
+//    Delete / Backspace  -> Delete selection
+//    Ctrl + Z / Ctrl + Y -> Undo / Redo
+//    Ctrl + C / Ctrl + V -> Copy / Paste selection
+//    Ctrl + A            -> Select all
+//    Ctrl + S            -> Save map to JSON
+//    Ctrl + O            -> Load map from JSON
+//    Escape              -> Deselect
 // ==========================================================
 
 #include <SFML/Graphics.hpp>
 #include <vector>
 #include <string>
-#include <fstream>
 #include <sstream>
-#include <cmath>
 #include <iostream>
-#include <optional>
 #include <filesystem>
+#include <cmath>
+
+#include "MapObject.h"
+#include "EditorState.h"
 
 // ----------------------------------------------------------
-// Data model
+// Home page (project browser / creation) - unchanged behavior
+// from the original editor, just kept out of the hot edit loop.
 // ----------------------------------------------------------
 
-enum class ObjectType {
-    Block = 0,
-    Spike,
-    Platform,
-    Coin
+struct ProjectEntry {
+    std::string name;
+    uintmax_t sizeBytes = 0;
 };
 
-std::string ObjectTypeToString(ObjectType type) {
-    switch (type) {
-        case ObjectType::Block:    return "block";
-        case ObjectType::Spike:    return "spike";
-        case ObjectType::Platform: return "platform";
-        case ObjectType::Coin:     return "coin";
+static std::vector<ProjectEntry> ScanProjects() {
+    std::vector<ProjectEntry> found;
+    for (const auto& entry : std::filesystem::directory_iterator("main/assets/map")) {
+        if (!entry.is_directory()) continue;
+        ProjectEntry p;
+        p.name = entry.path().filename().string();
+        std::filesystem::path mapFile = entry.path() / "map.json";
+        if (std::filesystem::exists(mapFile)) {
+            p.sizeBytes = std::filesystem::file_size(mapFile);
+        }
+        found.push_back(p);
     }
-    return "block";
+    return found;
 }
 
-ObjectType ObjectTypeFromString(const std::string& s) {
-    if (s == "spike")    return ObjectType::Spike;
-    if (s == "platform") return ObjectType::Platform;
-    if (s == "coin")     return ObjectType::Coin;
-    return ObjectType::Block;
-}
-
-sf::Color ObjectTypeColor(ObjectType type) {
-    switch (type) {
-        case ObjectType::Block:    return sf::Color(120, 120, 130);
-        case ObjectType::Spike:    return sf::Color(220, 60, 60);
-        case ObjectType::Platform: return sf::Color(90, 160, 220);
-        case ObjectType::Coin:     return sf::Color(240, 200, 60);
+static std::string FormatSize(uintmax_t bytes) {
+    if (bytes < 1024) return std::to_string(bytes) + " B";
+    double kb = bytes / 1024.0;
+    if (kb < 1024.0) {
+        std::ostringstream oss;
+        oss.precision(1);
+        oss << std::fixed << kb << " KB";
+        return oss.str();
     }
-    return sf::Color::White;
-}
-
-struct MapObject {
-    ObjectType type;
-    float x, y;         // world position (center)
-    float w, h;          // size
-    float rotation = 0.f; // degrees
-};
-
-// ----------------------------------------------------------
-// Minimal JSON writer / reader (schema-specific, no external lib)
-// ----------------------------------------------------------
-
-void SaveMapToJson(const std::string& path, const std::vector<MapObject>& objects) {
-    std::ofstream file(path);
-    if (!file.is_open()) {
-        std::cerr << "[MapEditor] Failed to open file for saving: " << path << std::endl;
-        return;
-    }
-
-    file << "{\n  \"objects\": [\n";
-    for (size_t i = 0; i < objects.size(); ++i) {
-        const MapObject& obj = objects[i];
-        file << "    { \"type\": \"" << ObjectTypeToString(obj.type) << "\", "
-             << "\"x\": " << obj.x << ", "
-             << "\"y\": " << obj.y << ", "
-             << "\"w\": " << obj.w << ", "
-             << "\"h\": " << obj.h << ", "
-             << "\"rotation\": " << obj.rotation << " }";
-        if (i + 1 < objects.size()) file << ",";
-        file << "\n";
-    }
-    file << "  ]\n}\n";
-
-    file.close();
-    std::cout << "[MapEditor] Saved " << objects.size() << " objects to " << path << std::endl;
-}
-
-// Extremely small hand-rolled parser tailored to the format written above.
-// It looks for repeating "key": value pairs inside each { ... } block.
-std::vector<MapObject> LoadMapFromJson(const std::string& path) {
-    std::vector<MapObject> objects;
-    std::ifstream file(path);
-    if (!file.is_open()) {
-        std::cerr << "[MapEditor] Failed to open file for loading: " << path << std::endl;
-        return objects;
-    }
-
-    std::stringstream buffer;
-    buffer << file.rdbuf();
-    std::string content = buffer.str();
-    file.close();
-
-    size_t pos = 0;
-    while (true) {
-        size_t objStart = content.find('{', pos);
-        if (objStart == std::string::npos) break;
-        size_t objEnd = content.find('}', objStart);
-        if (objEnd == std::string::npos) break;
-
-        // Skip the outer "{ objects: [" wrapper (it has no "type" key).
-        std::string block = content.substr(objStart, objEnd - objStart);
-        pos = objEnd + 1;
-
-        if (block.find("\"type\"") == std::string::npos) continue;
-
-        MapObject obj{};
-        auto extractString = [&](const std::string& key) -> std::string {
-            size_t k = block.find("\"" + key + "\"");
-            if (k == std::string::npos) return "";
-            size_t colon = block.find(':', k);
-            size_t q1 = block.find('"', colon);
-            size_t q2 = block.find('"', q1 + 1);
-            if (q1 == std::string::npos || q2 == std::string::npos) return "";
-            return block.substr(q1 + 1, q2 - q1 - 1);
-        };
-        auto extractFloat = [&](const std::string& key) -> float {
-            size_t k = block.find("\"" + key + "\"");
-            if (k == std::string::npos) return 0.f;
-            size_t colon = block.find(':', k);
-            size_t end = block.find_first_of(",}", colon);
-            std::string numStr = block.substr(colon + 1, end - colon - 1);
-            try { return std::stof(numStr); } catch (...) { return 0.f; }
-        };
-
-        obj.type = ObjectTypeFromString(extractString("type"));
-        obj.x = extractFloat("x");
-        obj.y = extractFloat("y");
-        obj.w = extractFloat("w");
-        obj.h = extractFloat("h");
-        obj.rotation = extractFloat("rotation");
-
-        objects.push_back(obj);
-    }
-
-    std::cout << "[MapEditor] Loaded " << objects.size() << " objects from " << path << std::endl;
-    return objects;
-}
-
-// ----------------------------------------------------------
-// Helpers
-// ----------------------------------------------------------
-
-float SnapValue(float value, float gridSize) {
-    return std::round(value / gridSize) * gridSize;
-}
-
-sf::RectangleShape MakeShapeForObject(const MapObject& obj) {
-    sf::RectangleShape shape({obj.w, obj.h});
-    shape.setOrigin({obj.w / 2.f, obj.h / 2.f});
-    shape.setPosition({obj.x, obj.y});
-    shape.setRotation(sf::degrees(obj.rotation));
-    shape.setFillColor(ObjectTypeColor(obj.type));
-    shape.setOutlineThickness(1.f);
-    shape.setOutlineColor(sf::Color(0, 0, 0, 180));
-    return shape;
-}
-
-bool PointInObject(const MapObject& obj, sf::Vector2f point) {
-    // Simple AABB hit test (rotation ignored for selection simplicity).
-    float left = obj.x - obj.w / 2.f;
-    float right = obj.x + obj.w / 2.f;
-    float top = obj.y - obj.h / 2.f;
-    float bottom = obj.y + obj.h / 2.f;
-    return point.x >= left && point.x <= right && point.y >= top && point.y <= bottom;
+    std::ostringstream oss;
+    oss.precision(1);
+    oss << std::fixed << (kb / 1024.0) << " MB";
+    return oss.str();
 }
 
 // ----------------------------------------------------------
@@ -207,62 +90,28 @@ int main() {
 
     sf::Font titleFont;
     bool titleFontLoaded = titleFont.openFromFile("main/assets/fonts/Honk-Regular-VariableFont_MORF,SHLN.ttf");
-    if (!titleFontLoaded) titleFontLoaded = false; // fallback handled at draw time
 
     sf::Texture arrowIconTexture;
     bool arrowIconLoaded = arrowIconTexture.loadFromFile("main/assets/images/UI/icons/icon_more_white.png");
 
-    // ---------------------------------------------------
-    // HOME PAGE (project browser + creation)
-    // ---------------------------------------------------
     std::filesystem::create_directories("main/assets/map");
 
-    struct ProjectEntry {
-        std::string name;
-        uintmax_t sizeBytes = 0;
-    };
-
-    auto scanProjects = [&]() -> std::vector<ProjectEntry> {
-        std::vector<ProjectEntry> found;
-        for (const auto& entry : std::filesystem::directory_iterator("main/assets/map")) {
-            if (!entry.is_directory()) continue;
-            ProjectEntry p;
-            p.name = entry.path().filename().string();
-            std::filesystem::path mapFile = entry.path() / "map.json";
-            if (std::filesystem::exists(mapFile)) {
-                p.sizeBytes = std::filesystem::file_size(mapFile);
-            }
-            found.push_back(p);
-        }
-        return found;
-    };
-
-    auto formatSize = [](uintmax_t bytes) -> std::string {
-        if (bytes < 1024) return std::to_string(bytes) + " B";
-        double kb = bytes / 1024.0;
-        if (kb < 1024.0) {
-            std::ostringstream oss;
-            oss.precision(1);
-            oss << std::fixed << kb << " KB";
-            return oss.str();
-        }
-        std::ostringstream oss;
-        oss.precision(1);
-        oss << std::fixed << (kb / 1024.0) << " MB";
-        return oss.str();
-    };
-
-    std::vector<ProjectEntry> projects = scanProjects();
+    std::vector<ProjectEntry> projects = ScanProjects();
 
     std::string projectName;
     bool typingStarted = false;
-    bool enteringName = false;   // true while typing a new project name
-    bool creatingProject = true; // true while on the home page
-    int selectedIndex = 0;       // 0 = "Create New +", 1..N = existing projects
-    bool isNewProjectCreation = false; // true only when finalizing a brand-new project
+    bool enteringName = false;
+    bool creatingProject = true;
+    int selectedIndex = 0;
+    bool isNewProjectCreation = false;
     int lastClickedIndex = -1;
     sf::Clock doubleClickClock;
     const float DOUBLE_CLICK_MS = 350.f;
+    float listScrollOffset = 0.f;
+    bool showHowTo = true;
+
+    sf::Texture closeIconTexture;
+    bool closeIconLoaded = closeIconTexture.loadFromFile("main/assets/images/UI/icons/icon_close_white.png");
 
     const std::string howToUseText =
         "HOW TO USE\n"
@@ -273,18 +122,23 @@ int main() {
         "is saved as its own map.json file.\n"
         "\n"
         "-- Controls --\n"
-        "Left Click     Place / Select & Drag\n"
-        "Right Click    Delete object\n"
-        "Middle Mouse   Pan camera\n"
-        "Mouse Wheel    Zoom in / out\n"
-        "1 - 4          Choose object type\n"
-        "G              Toggle grid snapping\n"
-        "R              Rotate selected object\n"
-        "[  /  ]        Shrink / Grow selected\n"
-        "Delete         Remove selected object\n"
-        "Ctrl + S       Save map\n"
-        "Ctrl + O       Load map\n"
-        "Escape         Deselect\n"
+        "Left Click       Place / Select\n"
+        "Shift + Click    Add/remove from selection\n"
+        "Drag empty area  Box-select\n"
+        "Right Click      Delete object\n"
+        "Middle Mouse     Pan camera\n"
+        "Mouse Wheel      Zoom in / out\n"
+        "1 - 4            Choose object type\n"
+        "G                Toggle grid snapping\n"
+        "R                Rotate selection\n"
+        "[  /  ]          Shrink / Grow selection\n"
+        "Delete           Remove selection\n"
+        "Ctrl + Z / Y     Undo / Redo\n"
+        "Ctrl + C / V     Copy / Paste\n"
+        "Ctrl + A         Select all\n"
+        "Ctrl + S         Save map\n"
+        "Ctrl + O         Load map\n"
+        "Escape           Deselect\n"
         "\n"
         "-- Tips --\n"
         "Enable grid snapping while blocking\n"
@@ -303,10 +157,17 @@ int main() {
                 window.close();
             }
 
+            if (const auto* wheelScrolled = event->getIf<sf::Event::MouseWheelScrolled>()) {
+                listScrollOffset -= wheelScrolled->delta * 30.f;
+                if (listScrollOffset < 0.f) listScrollOffset = 0.f;
+                float maxScroll = std::max(0.f, static_cast<float>(projects.size() + 1) * 56.f - (WINDOW_HEIGHT - 110.f));
+                if (listScrollOffset > maxScroll) listScrollOffset = maxScroll;
+            }
+
             if (enteringName) {
                 if (const auto* textEntered = event->getIf<sf::Event::TextEntered>()) {
                     char32_t unicode = textEntered->unicode;
-                    if (unicode == 8) { // Backspace
+                    if (unicode == 8) {
                         if (!projectName.empty()) projectName.pop_back();
                         typingStarted = true;
                     }
@@ -335,7 +196,7 @@ int main() {
             }
             else {
                 if (const auto* keyPressed = event->getIf<sf::Event::KeyPressed>()) {
-                    int itemCount = static_cast<int>(projects.size()) + 1; // +1 for "Create New"
+                    int itemCount = static_cast<int>(projects.size()) + 1;
                     if (keyPressed->code == sf::Keyboard::Key::Up) {
                         selectedIndex = (selectedIndex - 1 + itemCount) % itemCount;
                     }
@@ -359,7 +220,12 @@ int main() {
                         sf::Vector2f mousePos = window.mapPixelToCoords(mousePressed->position, window.getDefaultView());
                         float dividerX = WINDOW_WIDTH * 0.62f;
 
-                        if (projects.empty()) {
+                        float iconSize = 22.f;
+                        sf::FloatRect toggleIconBounds({static_cast<float>(WINDOW_WIDTH) - iconSize - 20.f, 24.f}, {iconSize, iconSize});
+                        if (toggleIconBounds.contains(mousePos)) {
+                            showHowTo = !showHowTo;
+                        }
+                        else if (projects.empty()) {
                             sf::FloatRect cardBounds({dividerX / 2.f - 160.f, WINDOW_HEIGHT / 2.f - 50.f}, {320.f, 100.f});
                             if (cardBounds.contains(mousePos)) {
                                 bool isDoubleClick = (lastClickedIndex == 0 && doubleClickClock.getElapsedTime().asMilliseconds() < DOUBLE_CLICK_MS);
@@ -379,7 +245,7 @@ int main() {
 
                             for (int i = -1; i < static_cast<int>(projects.size()); ++i) {
                                 int itemIndex = i + 1;
-                                float y = listY + itemIndex * rowHeight;
+                                float y = listY + itemIndex * rowHeight - listScrollOffset;
                                 sf::FloatRect rowBounds({listX, y}, {dividerX - 60.f, rowHeight - 8.f});
                                 if (rowBounds.contains(mousePos)) {
                                     selectedIndex = itemIndex;
@@ -410,7 +276,6 @@ int main() {
 
         window.clear(sf::Color(20, 20, 24));
 
-        // ---- Top-left title ----
         if (titleFontLoaded) {
             sf::Text title(titleFont, "Zero Theory - Map Editor", 32);
             title.setFillColor(sf::Color::White);
@@ -427,7 +292,6 @@ int main() {
 
         if (uiFontLoaded) {
             if (enteringName) {
-                // ---- Name entry overlay ----
                 sf::RectangleShape card({480.f, 90.f});
                 card.setFillColor(sf::Color(38, 38, 44));
                 card.setOutlineThickness(2.f);
@@ -451,7 +315,6 @@ int main() {
                 window.draw(hint);
             }
             else if (projects.empty()) {
-                // ---- No projects: centered "Create New +" box ----
                 sf::RectangleShape card({320.f, 100.f});
                 card.setFillColor(sf::Color(34, 34, 40));
                 card.setOutlineThickness(2.f);
@@ -470,14 +333,14 @@ int main() {
                 window.draw(hint);
             }
             else {
-                // ---- Project list ----
                 float listX = 40.f;
                 float listY = 110.f;
                 float rowHeight = 56.f;
 
                 for (int i = -1; i < static_cast<int>(projects.size()); ++i) {
-                    int itemIndex = i + 1; // 0 = Create New, 1..N = projects
-                    float y = listY + itemIndex * rowHeight;
+                    int itemIndex = i + 1;
+                    float y = listY + itemIndex * rowHeight - listScrollOffset;
+                    if (y < listY - rowHeight || y > WINDOW_HEIGHT) continue;
 
                     sf::RectangleShape row({dividerX - 60.f, rowHeight - 8.f});
                     row.setPosition({listX, y});
@@ -501,7 +364,7 @@ int main() {
                         nameText.setPosition({listX + 16.f, y + 6.f});
                         window.draw(nameText);
 
-                        sf::Text sizeText(uiFont, formatSize(p.sizeBytes), 14);
+                        sf::Text sizeText(uiFont, FormatSize(p.sizeBytes), 14);
                         sizeText.setFillColor(sf::Color(150, 150, 160));
                         sizeText.setPosition({listX + 16.f, y + 30.f});
                         window.draw(sizeText);
@@ -519,17 +382,36 @@ int main() {
                 }
             }
 
-            // ---- Right divider panel: How To Use ----
             sf::RectangleShape divider({2.f, static_cast<float>(WINDOW_HEIGHT)});
             divider.setPosition({dividerX, 0.f});
             divider.setFillColor(sf::Color(60, 60, 66));
             window.draw(divider);
 
-            sf::Text howTo(uiFont, howToUseText, 16);
-            howTo.setFillColor(sf::Color(210, 210, 215));
-            howTo.setPosition({dividerX + 30.f, 30.f});
-            howTo.setLineSpacing(1.2f);
-            window.draw(howTo);
+            if (showHowTo) {
+                sf::Text howTo(uiFont, howToUseText, 16);
+                howTo.setFillColor(sf::Color(210, 210, 215));
+                howTo.setPosition({dividerX + 30.f, 30.f});
+                howTo.setLineSpacing(1.2f);
+                window.draw(howTo);
+
+                if (closeIconLoaded) {
+                    sf::Sprite closeSprite(closeIconTexture);
+                    sf::Vector2u texSize = closeIconTexture.getSize();
+                    float iconSize2 = 22.f;
+                    float scale = (texSize.x > 0) ? (iconSize2 / static_cast<float>(texSize.x)) : 1.f;
+                    closeSprite.setScale({scale, scale});
+                    closeSprite.setPosition({static_cast<float>(WINDOW_WIDTH) - iconSize2 - 20.f, 24.f});
+                    window.draw(closeSprite);
+                }
+            } else if (arrowIconLoaded) {
+                sf::Sprite reopenSprite(arrowIconTexture);
+                sf::Vector2u texSize = arrowIconTexture.getSize();
+                float iconSize2 = 22.f;
+                float scale = (texSize.x > 0) ? (iconSize2 / static_cast<float>(texSize.x)) : 1.f;
+                reopenSprite.setScale({scale, scale});
+                reopenSprite.setPosition({static_cast<float>(WINDOW_WIDTH) - iconSize2 - 20.f, 24.f});
+                window.draw(reopenSprite);
+            }
         }
 
         window.display();
@@ -554,13 +436,17 @@ int main() {
     sf::View camera(sf::FloatRect({0.f, 0.f}, {static_cast<float>(WINDOW_WIDTH), static_cast<float>(WINDOW_HEIGHT)}));
     window.setView(camera);
 
-    std::vector<MapObject> objects;
+    // ---------------- Editor state ----------------
+    EditorState editor;
     ObjectType currentType = ObjectType::Block;
     bool snapEnabled = true;
-    selectedIndex = -1;
-    bool draggingObject = false;
     bool panningCamera = false;
     sf::Vector2i lastMousePixel;
+
+    // Drag state: either dragging the current selection, or box-selecting.
+    bool draggingSelection = false;
+    bool boxSelecting = false;
+    sf::Vector2f dragStartWorld;
 
     while (window.isOpen()) {
         while (const auto event = window.pollEvent()) {
@@ -573,50 +459,54 @@ int main() {
                 camera.setSize(visibleArea.size);
             }
 
-            // ---- Mouse wheel: zoom ----
             if (const auto* wheel = event->getIf<sf::Event::MouseWheelScrolled>()) {
                 float zoomFactor = (wheel->delta > 0) ? 0.9f : 1.1f;
                 camera.zoom(zoomFactor);
             }
 
-            // ---- Mouse buttons ----
             if (const auto* mousePressed = event->getIf<sf::Event::MouseButtonPressed>()) {
                 sf::Vector2f worldPos = window.mapPixelToCoords(mousePressed->position, camera);
+                bool shiftHeld = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LShift) ||
+                                  sf::Keyboard::isKeyPressed(sf::Keyboard::Key::RShift);
 
                 if (mousePressed->button == sf::Mouse::Button::Middle) {
                     panningCamera = true;
                     lastMousePixel = mousePressed->position;
                 }
                 else if (mousePressed->button == sf::Mouse::Button::Left) {
-                    // Try to select an existing object first (topmost = last drawn).
                     int hitIndex = -1;
-                    for (int i = static_cast<int>(objects.size()) - 1; i >= 0; --i) {
-                        if (PointInObject(objects[i], worldPos)) {
-                            hitIndex = i;
-                            break;
-                        }
+                    const auto& objs = editor.objects();
+                    for (int i = static_cast<int>(objs.size()) - 1; i >= 0; --i) {
+                        if (PointInObject(objs[i], worldPos)) { hitIndex = i; break; }
                     }
 
                     if (hitIndex != -1) {
-                        selectedIndex = hitIndex;
-                        draggingObject = true;
+                        if (shiftHeld) {
+                            editor.toggleSelect(hitIndex);
+                        } else if (!editor.isSelected(hitIndex)) {
+                            editor.selectOnly(hitIndex);
+                        }
+                        draggingSelection = true;
+                        editor.beginChange();
+                        dragStartWorld = worldPos;
+                    } else if (shiftHeld) {
+                        // Shift-drag on empty space = additive box-select.
+                        boxSelecting = true;
+                        dragStartWorld = worldPos;
                     } else {
-                        // Place a new object.
-                        MapObject obj;
-                        obj.type = currentType;
-                        obj.w = 40.f;
-                        obj.h = 40.f;
-                        obj.x = snapEnabled ? SnapValue(worldPos.x, GRID_SIZE) : worldPos.x;
-                        obj.y = snapEnabled ? SnapValue(worldPos.y, GRID_SIZE) : worldPos.y;
-                        objects.push_back(obj);
-                        selectedIndex = static_cast<int>(objects.size()) - 1;
+                        // Empty space, no shift: start a box-select; if the
+                        // mouse never moves we treat it as "place new object"
+                        // on release instead (see MouseButtonReleased below).
+                        boxSelecting = true;
+                        dragStartWorld = worldPos;
                     }
                 }
                 else if (mousePressed->button == sf::Mouse::Button::Right) {
-                    for (int i = static_cast<int>(objects.size()) - 1; i >= 0; --i) {
-                        if (PointInObject(objects[i], worldPos)) {
-                            objects.erase(objects.begin() + i);
-                            if (selectedIndex == i) selectedIndex = -1;
+                    const auto& objs = editor.objects();
+                    for (int i = static_cast<int>(objs.size()) - 1; i >= 0; --i) {
+                        if (PointInObject(objs[i], worldPos)) {
+                            editor.selectOnly(i);
+                            editor.deleteSelected();
                             break;
                         }
                     }
@@ -624,11 +514,37 @@ int main() {
             }
 
             if (const auto* mouseReleased = event->getIf<sf::Event::MouseButtonReleased>()) {
+                sf::Vector2f worldPos = window.mapPixelToCoords(mouseReleased->position, camera);
+
                 if (mouseReleased->button == sf::Mouse::Button::Middle) {
                     panningCamera = false;
                 }
                 if (mouseReleased->button == sf::Mouse::Button::Left) {
-                    draggingObject = false;
+                    if (draggingSelection) {
+                        editor.commitChange();
+                        draggingSelection = false;
+                    }
+                    if (boxSelecting) {
+                        float movedDist = std::hypot(worldPos.x - dragStartWorld.x, worldPos.y - dragStartWorld.y);
+                        if (movedDist < 3.f) {
+                            // Treated as a plain click on empty space -> place a new object.
+                            MapObject obj;
+                            obj.type = currentType;
+                            obj.w = 40.f;
+                            obj.h = 40.f;
+                            obj.x = snapEnabled ? SnapValue(worldPos.x, GRID_SIZE) : worldPos.x;
+                            obj.y = snapEnabled ? SnapValue(worldPos.y, GRID_SIZE) : worldPos.y;
+                            editor.addObject(obj);
+                        } else {
+                            sf::FloatRect rect(
+                                {std::min(dragStartWorld.x, worldPos.x), std::min(dragStartWorld.y, worldPos.y)},
+                                {std::abs(worldPos.x - dragStartWorld.x), std::abs(worldPos.y - dragStartWorld.y)});
+                            bool additive = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LShift) ||
+                                            sf::Keyboard::isKeyPressed(sf::Keyboard::Key::RShift);
+                            editor.selectInRect(rect, additive);
+                        }
+                        boxSelecting = false;
+                    }
                 }
             }
 
@@ -639,64 +555,87 @@ int main() {
                                  -static_cast<float>(delta.y) * (camera.getSize().y / WINDOW_HEIGHT)});
                     lastMousePixel = mouseMoved->position;
                 }
-                else if (draggingObject && selectedIndex != -1) {
+                else if (draggingSelection && editor.hasSelection()) {
                     sf::Vector2f worldPos = window.mapPixelToCoords(mouseMoved->position, camera);
-                    MapObject& obj = objects[selectedIndex];
-                    obj.x = snapEnabled ? SnapValue(worldPos.x, GRID_SIZE) : worldPos.x;
-                    obj.y = snapEnabled ? SnapValue(worldPos.y, GRID_SIZE) : worldPos.y;
+                    float targetX = snapEnabled ? SnapValue(worldPos.x, GRID_SIZE) : worldPos.x;
+                    float targetY = snapEnabled ? SnapValue(worldPos.y, GRID_SIZE) : worldPos.y;
+                    editor.moveSelectedBy(targetX - dragStartWorld.x, targetY - dragStartWorld.y);
+                    dragStartWorld = {targetX, targetY};
                 }
             }
 
-            // ---- Keyboard ----
             if (const auto* keyPressed = event->getIf<sf::Event::KeyPressed>()) {
-                bool ctrlHeld = keyPressed->control;
+                bool ctrlHeld = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl) ||
+                                 sf::Keyboard::isKeyPressed(sf::Keyboard::Key::RControl);
 
                 if (keyPressed->code == sf::Keyboard::Key::Num1) currentType = ObjectType::Block;
                 else if (keyPressed->code == sf::Keyboard::Key::Num2) currentType = ObjectType::Spike;
                 else if (keyPressed->code == sf::Keyboard::Key::Num3) currentType = ObjectType::Platform;
                 else if (keyPressed->code == sf::Keyboard::Key::Num4) currentType = ObjectType::Coin;
                 else if (keyPressed->code == sf::Keyboard::Key::G) snapEnabled = !snapEnabled;
-                else if (keyPressed->code == sf::Keyboard::Key::Escape) selectedIndex = -1;
-                else if ((keyPressed->code == sf::Keyboard::Key::Delete ||
-                          keyPressed->code == sf::Keyboard::Key::Backspace) && selectedIndex != -1) {
-                    objects.erase(objects.begin() + selectedIndex);
-                    selectedIndex = -1;
+                else if (keyPressed->code == sf::Keyboard::Key::Escape) editor.clearSelection();
+                else if (keyPressed->code == sf::Keyboard::Key::Delete ||
+                         keyPressed->code == sf::Keyboard::Key::Backspace) {
+                    editor.deleteSelected();
                 }
-                else if (keyPressed->code == sf::Keyboard::Key::R && selectedIndex != -1) {
-                    objects[selectedIndex].rotation += 15.f;
-                    if (objects[selectedIndex].rotation >= 360.f) objects[selectedIndex].rotation -= 360.f;
+                else if (keyPressed->code == sf::Keyboard::Key::R) {
+                    editor.rotateSelectedBy(15.f);
                 }
-                else if (keyPressed->code == sf::Keyboard::Key::LBracket && selectedIndex != -1) {
-                    objects[selectedIndex].w = std::max(10.f, objects[selectedIndex].w - 5.f);
-                    objects[selectedIndex].h = std::max(10.f, objects[selectedIndex].h - 5.f);
+                else if (keyPressed->code == sf::Keyboard::Key::LBracket) {
+                    editor.resizeSelectedBy(-5.f);
                 }
-                else if (keyPressed->code == sf::Keyboard::Key::RBracket && selectedIndex != -1) {
-                    objects[selectedIndex].w += 5.f;
-                    objects[selectedIndex].h += 5.f;
+                else if (keyPressed->code == sf::Keyboard::Key::RBracket) {
+                    editor.resizeSelectedBy(5.f);
                 }
                 else if (ctrlHeld && keyPressed->code == sf::Keyboard::Key::S) {
-                    SaveMapToJson(SAVE_PATH, objects);
+                    editor.saveToFile(SAVE_PATH);
                 }
                 else if (ctrlHeld && keyPressed->code == sf::Keyboard::Key::O) {
-                    objects = LoadMapFromJson(SAVE_PATH);
-                    selectedIndex = -1;
+                    editor.loadFromFile(SAVE_PATH);
+                }
+                else if (ctrlHeld && keyPressed->code == sf::Keyboard::Key::Z) {
+                    editor.undo();
+                }
+                else if (ctrlHeld && keyPressed->code == sf::Keyboard::Key::Y) {
+                    editor.redo();
+                }
+                else if (ctrlHeld && keyPressed->code == sf::Keyboard::Key::C) {
+                    editor.copySelected();
+                }
+                else if (ctrlHeld && keyPressed->code == sf::Keyboard::Key::V) {
+                    editor.paste(GRID_SIZE, GRID_SIZE);
+                }
+                else if (ctrlHeld && keyPressed->code == sf::Keyboard::Key::A) {
+                    sf::FloatRect everything({-100000.f, -100000.f}, {200000.f, 200000.f});
+                    editor.selectInRect(everything, false);
                 }
             }
         }
 
         window.setView(camera);
 
-        // ---- Draw ----
         window.clear(sf::Color(30, 30, 34));
 
-        // Objects
-        for (int i = 0; i < static_cast<int>(objects.size()); ++i) {
-            sf::RectangleShape shape = MakeShapeForObject(objects[i]);
-            if (i == selectedIndex) {
+        const auto& objs = editor.objects();
+        for (int i = 0; i < static_cast<int>(objs.size()); ++i) {
+            sf::RectangleShape shape = MakeShapeForObject(objs[i]);
+            if (editor.isSelected(i)) {
                 shape.setOutlineThickness(3.f);
                 shape.setOutlineColor(sf::Color::White);
             }
             window.draw(shape);
+        }
+
+        if (boxSelecting) {
+            sf::Vector2f mouseWorld = window.mapPixelToCoords(sf::Mouse::getPosition(window), camera);
+            sf::RectangleShape marquee(
+                {std::abs(mouseWorld.x - dragStartWorld.x), std::abs(mouseWorld.y - dragStartWorld.y)});
+            marquee.setPosition(
+                {std::min(dragStartWorld.x, mouseWorld.x), std::min(dragStartWorld.y, mouseWorld.y)});
+            marquee.setFillColor(sf::Color(90, 90, 240, 40));
+            marquee.setOutlineThickness(1.f);
+            marquee.setOutlineColor(sf::Color(90, 90, 240, 180));
+            window.draw(marquee);
         }
 
         window.display();
