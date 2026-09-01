@@ -82,7 +82,7 @@ Map_Editor_Architecture/
   ```
   pacman -S mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-sfml
   ```
-- Now you have install `G++` and `SFML`, just run the ***build.bat*** file.
+- Now you have install `G++` and `SFML`, just run the ***build.bat*** file. (**Recommendation**: Turn of your Windows Defender **/** any Antivirus software)
 - It will create `ZeroTheory.exe` **/** `MapEditor.exe` and other files and folders at-
   ```
   ZeroTheory/
