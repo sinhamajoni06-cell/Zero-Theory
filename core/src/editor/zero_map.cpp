@@ -97,9 +97,11 @@ int main() {
     const unsigned int WINDOW_HEIGHT = 720;
     const float GRID_SIZE = 40.f;
 
-    sf::RenderWindow window(sf::VideoMode({WINDOW_WIDTH, WINDOW_HEIGHT}), "Zero Theory - Map Editor");
+    sf::RenderWindow window(sf::VideoMode({WINDOW_WIDTH, WINDOW_HEIGHT}), "Zero Theory - Map Editor",
+                             sf::Style::Titlebar | sf::Style::Resize | sf::Style::Close);
     window.setFramerateLimit(60);
     window.setMinimumSize(sf::Vector2u(640, 360));
+    window.setMaximumSize(sf::Vector2u(7680, 4320));
 
     sf::View homeView(sf::FloatRect({0.f, 0.f}, {static_cast<float>(window.getSize().x), static_cast<float>(window.getSize().y)}));
 
@@ -949,7 +951,7 @@ int main() {
         projectName = finalName;
     }
 
-    RunMapEditorSession(window, projectName, window.getSize().x, window.getSize().y);
+    RunMapEditorSession(window, projectName, window.getSize().x, window.getSize().y, uiFont);
 
     return 0;
 }
