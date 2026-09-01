@@ -28,19 +28,22 @@ A undesigned game.
 
 ```
 Zero-Theory-core/
-  ├── core/
-  │   ├── lib/
-  │   │   ├── header/              # Additional C++ headers
-  │   │   └── cpp/                 # Must contain at least one .cpp file
-  │   └── src/
-  │       ├── editor/
-  │       │   └── zero_map.cpp     # Map creator and editor
-  │       └── engine/
-  │           └── NoTEngine.cpp    # Main entry point file
-  ├── main/                        # All Script and Additional files creates this automatically for output
-  ├── build.bat                    # Main build script to execute on your system
-  ├── .README/                     # All the other elements for README.md file
-  └── README.md               
+├── core/
+│   ├── lib/
+│   │   ├── header/                    # C++ header files (-I core/lib/header)
+│   │   └── cpp/                       # Shared engine implementation files (*.cpp)
+│   └── src/
+│       ├── editor/
+│       │   ├── zero_map.cpp           # Map Editor main entry point
+│       │   └── zero_editor_session.cpp# Editor session, UI, and tool interaction logic
+│       └── engine/
+│           └── NoTEngine.cpp          # Main Game entry point
+├── main/
+│   └── assets/                        # Game resources and material assets
+│       └── map/                       # Map workspace assets synced during build
+├── .README/                           # Additional assets for README rendering
+├── build.bat                          # Automated compilation and launcher script
+└── README.md                          # Primary repository documentation
 ```
 ---
 ## G++ Installation and Setup
