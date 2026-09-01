@@ -147,5 +147,5 @@ in your `Terminal` **/** `cmd`.
 - **Player count**: `3`
 - **Chapter**: `3`
 - **Game**-
-  - **Version**- `v0.1.0`
+  - **Version**- `v0.2.0`
   - **Name**- `Zero Theory`
