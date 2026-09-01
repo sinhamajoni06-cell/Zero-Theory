@@ -33,6 +33,7 @@
 
 #include "MapObject.h"
 #include "EditorState.h"
+#include "zero_editor_session.h"
 
 // ----------------------------------------------------------
 // Home page (project browser / creation) - unchanged behavior
@@ -139,6 +140,9 @@ int main() {
     sf::Texture deleteIconTexture;
     bool deleteIconLoaded = deleteIconTexture.loadFromFile("main/assets/images/UI/icons/delete.png");
 
+    sf::Texture backIconTexture;
+    bool backIconLoaded = backIconTexture.loadFromFile("main/assets/images/UI/icons/icon_arrow_left.png");
+
     sf::Shader iconTintShader;
     bool iconTintShaderLoaded = sf::Shader::isAvailable() &&
         iconTintShader.loadFromMemory(kIconTintFragmentShader, sf::Shader::Type::Fragment);
@@ -239,16 +243,20 @@ int main() {
                         renamingProject = false;
                     }
                     else if (keyPressed->code == sf::Keyboard::Key::Enter) {
-                        if (!renameBuffer.empty() &&
-                            renamingIndex >= 0 && renamingIndex < static_cast<int>(projects.size())) {
+                        if (renameBuffer.empty()) {
+                            renameNameError = "[Error!] Name cannot be empty";
+                            renameErrorClock.restart();
+                        } else if (renamingIndex >= 0 && renamingIndex < static_cast<int>(projects.size()) &&
+                                   std::any_of(projects.begin(), projects.end(),
+                                   [&](const ProjectEntry& p) { return p.name == renameBuffer && &p != &projects[renamingIndex]; })) {
+                            renameNameError = "[Error!] A project with that name already exists";
+                            renameErrorClock.restart();
+                        } else if (renamingIndex >= 0 && renamingIndex < static_cast<int>(projects.size())) {
                             std::filesystem::rename("main/assets/map/" + projects[renamingIndex].name,
                                                      "main/assets/map/" + renameBuffer);
                             projects = ScanProjects();
                             renamingProject = false;
                             projectMenuIndex = -1;
-                        } else {
-                            renameNameError = "[Error!] Name cannot be empty";
-                            renameErrorClock.restart();
                         }
                     }
                 }
@@ -281,9 +289,15 @@ int main() {
                     if (mousePressed->button == sf::Mouse::Button::Left) {
                         sf::Vector2f mousePos = window.mapPixelToCoords(mousePressed->position, homeView);
                         float iconSize = 22.f;
+                        float dividerX = (WINDOW_WIDTH - 60.f) + (WINDOW_WIDTH * 0.62f - (WINDOW_WIDTH - 60.f)) * howToAnim;
                         sf::FloatRect toggleIconBounds({static_cast<float>(WINDOW_WIDTH) - iconSize - 20.f, 24.f}, {iconSize, iconSize});
+                        sf::FloatRect backIconBounds({dividerX / 2.f - 240.f, WINDOW_HEIGHT / 2.f - 45.f - iconSize - 10.f}, {iconSize, iconSize});
                         if (toggleIconBounds.contains(mousePos)) {
                             showHowTo = !showHowTo;
+                        } else if (backIconBounds.contains(mousePos)) {
+                            enteringName = false;
+                            typingStarted = false;
+                            projectName.clear();
                         }
                     }
                 }
@@ -311,12 +325,16 @@ int main() {
                 }
                 if (const auto* keyPressed = event->getIf<sf::Event::KeyPressed>()) {
                     if (keyPressed->code == sf::Keyboard::Key::Enter) {
-                        if (!projectName.empty()) {
-                            isNewProjectCreation = true;
-                            creatingProject = false;
-                        } else {
+                        if (projectName.empty()) {
                             createNameError = "[Error!] Name cannot be empty";
                             createErrorClock.restart();
+                        } else if (std::any_of(projects.begin(), projects.end(),
+                                   [&](const ProjectEntry& p) { return p.name == projectName; })) {
+                            createNameError = "[Error!] A project with that name already exists";
+                            createErrorClock.restart();
+                        } else {
+                            isNewProjectCreation = true;
+                            creatingProject = false;
                         }
                     }
                     else if (keyPressed->code == sf::Keyboard::Key::Escape) {
@@ -503,14 +521,8 @@ int main() {
                                             lastClickedIndex = itemIndex;
 
                                             if (isDoubleClick) {
-                                                if (i == -1) {
-                                                    enteringName = true;
-                                                    typingStarted = false;
-                                                    projectName = "New Project";
-                                                } else {
-                                                    projectName = projects[i].name;
-                                                    creatingProject = false;
-                                                }
+                                                projectName = projects[i].name;
+                                                creatingProject = false;
                                                 lastClickedIndex = -1;
                                             }
                                             break;
@@ -554,6 +566,22 @@ int main() {
 
         if (uiFontLoaded) {
             if (enteringName) {
+                if (backIconLoaded) {
+                    sf::Sprite backSprite(backIconTexture);
+                    sf::Vector2u texSize = backIconTexture.getSize();
+                    float iconSize = 22.f;
+                    float scale = (texSize.x > 0) ? (iconSize / static_cast<float>(texSize.x)) : 1.f;
+                    backSprite.setScale({scale, scale});
+                    backSprite.setPosition({dividerX / 2.f - 240.f, WINDOW_HEIGHT / 2.f - 45.f - iconSize - 10.f});
+                    if (iconTintShaderLoaded) {
+                        iconTintShader.setUniform("source", backIconTexture);
+                        iconTintShader.setUniform("tintColor", sf::Glsl::Vec4(1.f, 1.f, 1.f, 1.f));
+                        window.draw(backSprite, &iconTintShader);
+                    } else {
+                        window.draw(backSprite);
+                    }
+                }
+
                 sf::RectangleShape card({480.f, 90.f});
                 card.setFillColor(sf::Color(38, 38, 44));
                 card.setOutlineThickness(2.f);
@@ -921,24 +949,12 @@ int main() {
         projectName = finalName;
     }
 
-    std::filesystem::create_directories("main/assets/map/" + projectName);
-    const std::string SAVE_PATH = "main/assets/map/" + projectName + "/map.json";
+    RunMapEditorSession(window, projectName, window.getSize().x, window.getSize().y);
 
-    sf::View camera(sf::FloatRect({0.f, 0.f}, {static_cast<float>(WINDOW_WIDTH), static_cast<float>(WINDOW_HEIGHT)}));
-    window.setView(camera);
+    return 0;
+}
 
-    // ---------------- Editor state ----------------
-    EditorState editor;
-    ObjectType currentType = ObjectType::Block;
-    bool snapEnabled = true;
-    bool panningCamera = false;
-    sf::Vector2i lastMousePixel;
-
-    // Drag state: either dragging the current selection, or box-selecting.
-    bool draggingSelection = false;
-    bool boxSelecting = false;
-    sf::Vector2f dragStartWorld;
-
+#if 0
     while (window.isOpen()) {
         while (const auto event = window.pollEvent()) {
             if (event->is<sf::Event::Closed>()) {
@@ -1131,6 +1147,4 @@ int main() {
 
         window.display();
     }
-
-    return 0;
-}
+#endif
