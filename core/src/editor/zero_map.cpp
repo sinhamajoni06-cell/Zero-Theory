@@ -29,6 +29,7 @@
 #include <iostream>
 #include <filesystem>
 #include <cmath>
+#include <algorithm>
 
 #include "MapObject.h"
 #include "EditorState.h"
@@ -84,6 +85,9 @@ int main() {
 
     sf::RenderWindow window(sf::VideoMode({WINDOW_WIDTH, WINDOW_HEIGHT}), "Zero Theory - Map Editor");
     window.setFramerateLimit(60);
+    window.setMinimumSize(sf::Vector2u(640, 360));
+
+    sf::View homeView(sf::FloatRect({0.f, 0.f}, {static_cast<float>(window.getSize().x), static_cast<float>(window.getSize().y)}));
 
     sf::Font uiFont;
     bool uiFontLoaded = uiFont.openFromFile("main/assets/fonts/VT323-Regular.ttf");
@@ -109,9 +113,28 @@ int main() {
     const float DOUBLE_CLICK_MS = 350.f;
     float listScrollOffset = 0.f;
     bool showHowTo = true;
+    float howToAnim = 1.f; // 0 = fully closed, 1 = fully open
+    sf::Clock homeAnimClock;
 
     sf::Texture closeIconTexture;
     bool closeIconLoaded = closeIconTexture.loadFromFile("main/assets/images/UI/icons/icon_close_white.png");
+
+    sf::Texture editIconTexture;
+    bool editIconLoaded = editIconTexture.loadFromFile("main/assets/images/UI/icons/edit.png");
+
+    sf::Texture deleteIconTexture;
+    bool deleteIconLoaded = deleteIconTexture.loadFromFile("main/assets/images/UI/icons/delete.png");
+
+    float howToScrollOffset = 0.f;
+
+    // Per-project context menu / rename / delete confirmation state.
+    int projectMenuIndex = -1;
+    bool confirmingDelete = false;
+    int pendingDeleteIndex = -1;
+    bool renamingProject = false;
+    int renamingIndex = -1;
+    std::string renameBuffer;
+    bool renameTypingStarted = false;
 
     const std::string howToUseText =
         "HOW TO USE\n"
@@ -152,19 +175,83 @@ int main() {
         "4. Load it back into the Game Engine";
 
     while (window.isOpen() && creatingProject) {
+        // Shadow the initial constants with the *current* window size, so every
+        // layout calculation below (dividerX, card positions, list width, etc.)
+        // automatically reflows to fill whatever size the window actually is.
+        unsigned int WINDOW_WIDTH = window.getSize().x;
+        unsigned int WINDOW_HEIGHT = window.getSize().y;
         while (const auto event = window.pollEvent()) {
             if (event->is<sf::Event::Closed>()) {
                 window.close();
             }
 
+            if (const auto* homeResized = event->getIf<sf::Event::Resized>()) {
+                sf::Vector2f newSize(static_cast<float>(homeResized->size.x), static_cast<float>(homeResized->size.y));
+                homeView.setSize(newSize);
+                homeView.setCenter({newSize.x / 2.f, newSize.y / 2.f});
+            }
+
+            if (renamingProject) {
+                if (const auto* textEntered = event->getIf<sf::Event::TextEntered>()) {
+                    char32_t unicode = textEntered->unicode;
+                    if (unicode == 8) {
+                        if (!renameBuffer.empty()) renameBuffer.pop_back();
+                    } else if (unicode >= 32 && unicode < 127) {
+                        char c = static_cast<char>(unicode);
+                        bool allowed = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                                       (c >= '0' && c <= '9') || c == '_' || c == ' ';
+                        if (allowed && renameBuffer.size() < 16) renameBuffer += c;
+                    }
+                }
+                if (const auto* keyPressed = event->getIf<sf::Event::KeyPressed>()) {
+                    if (keyPressed->code == sf::Keyboard::Key::Escape) {
+                        renamingProject = false;
+                    }
+                    else if (keyPressed->code == sf::Keyboard::Key::Enter) {
+                        if (renameBuffer.size() >= 4 && renameBuffer.size() <= 16 &&
+                            renamingIndex >= 0 && renamingIndex < static_cast<int>(projects.size())) {
+                            std::filesystem::rename("main/assets/map/" + projects[renamingIndex].name,
+                                                     "main/assets/map/" + renameBuffer);
+                            projects = ScanProjects();
+                            renamingProject = false;
+                            projectMenuIndex = -1;
+                        }
+                    }
+                }
+            }
+
             if (const auto* wheelScrolled = event->getIf<sf::Event::MouseWheelScrolled>()) {
-                listScrollOffset -= wheelScrolled->delta * 30.f;
-                if (listScrollOffset < 0.f) listScrollOffset = 0.f;
-                float maxScroll = std::max(0.f, static_cast<float>(projects.size() + 1) * 56.f - (WINDOW_HEIGHT - 110.f));
-                if (listScrollOffset > maxScroll) listScrollOffset = maxScroll;
+                sf::Vector2f wheelWorldPos = window.mapPixelToCoords(wheelScrolled->position, homeView);
+                float dividerXNow = (WINDOW_WIDTH - 60.f) + (WINDOW_WIDTH * 0.62f - (WINDOW_WIDTH - 60.f)) * howToAnim;
+
+                if (howToAnim > 0.5f && wheelWorldPos.x > dividerXNow) {
+                    float howToViewHeight = static_cast<float>(WINDOW_HEIGHT) - 60.f;
+                    float lineCount = 1.f;
+                    for (char ch : howToUseText) if (ch == '\n') lineCount += 1.f;
+                    float howToContentHeight = lineCount * 16.f * 1.2f;
+                    float maxHowToScroll = std::max(0.f, howToContentHeight - howToViewHeight);
+                    howToScrollOffset -= wheelScrolled->delta * 30.f;
+                    if (howToScrollOffset < 0.f) howToScrollOffset = 0.f;
+                    if (howToScrollOffset > maxHowToScroll) howToScrollOffset = maxHowToScroll;
+                } else {
+                    listScrollOffset -= wheelScrolled->delta * 30.f;
+                    if (listScrollOffset < 0.f) listScrollOffset = 0.f;
+                    float maxScroll = std::max(0.f, static_cast<float>(projects.size() + 1) * 56.f - (WINDOW_HEIGHT - 110.f));
+                    if (listScrollOffset > maxScroll) listScrollOffset = maxScroll;
+                }
             }
 
             if (enteringName) {
+                if (const auto* mousePressed = event->getIf<sf::Event::MouseButtonPressed>()) {
+                    if (mousePressed->button == sf::Mouse::Button::Left) {
+                        sf::Vector2f mousePos = window.mapPixelToCoords(mousePressed->position, homeView);
+                        float iconSize = 22.f;
+                        sf::FloatRect toggleIconBounds({static_cast<float>(WINDOW_WIDTH) - iconSize - 20.f, 24.f}, {iconSize, iconSize});
+                        if (toggleIconBounds.contains(mousePos)) {
+                            showHowTo = !showHowTo;
+                        }
+                    }
+                }
                 if (const auto* textEntered = event->getIf<sf::Event::TextEntered>()) {
                     char32_t unicode = textEntered->unicode;
                     if (unicode == 8) {
@@ -176,16 +263,22 @@ int main() {
                             projectName.clear();
                             typingStarted = true;
                         }
-                        if (projectName.size() < 40) {
-                            projectName += static_cast<char>(unicode);
+                        char c = static_cast<char>(unicode);
+                        bool allowed = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                                       (c >= '0' && c <= '9') || c == '_' || c == ' ';
+                        if (allowed && projectName.size() < 16) {
+                            projectName += c;
                         }
                     }
                 }
                 if (const auto* keyPressed = event->getIf<sf::Event::KeyPressed>()) {
                     if (keyPressed->code == sf::Keyboard::Key::Enter) {
-                        if (projectName.empty()) projectName = "New Project";
-                        isNewProjectCreation = true;
-                        creatingProject = false;
+                        if (projectName.size() >= 4 && projectName.size() <= 16) {
+                            isNewProjectCreation = true;
+                            creatingProject = false;
+                        }
+                        // Names shorter than 4 or longer than 16 chars are rejected silently;
+                        // the player stays in the name-entry screen to fix it.
                     }
                     else if (keyPressed->code == sf::Keyboard::Key::Escape) {
                         enteringName = false;
@@ -217,55 +310,121 @@ int main() {
 
                 if (const auto* mousePressed = event->getIf<sf::Event::MouseButtonPressed>()) {
                     if (mousePressed->button == sf::Mouse::Button::Left) {
-                        sf::Vector2f mousePos = window.mapPixelToCoords(mousePressed->position, window.getDefaultView());
-                        float dividerX = WINDOW_WIDTH * 0.62f;
+                        sf::Vector2f mousePos = window.mapPixelToCoords(mousePressed->position, homeView);
+                        float dividerX = (WINDOW_WIDTH - 60.f) + (WINDOW_WIDTH * 0.62f - (WINDOW_WIDTH - 60.f)) * howToAnim;
+                        float listX = 40.f;
+                        float listY = 110.f;
+                        float rowHeight = 56.f;
+                        float iconBtnSize = 24.f;
 
-                        float iconSize = 22.f;
-                        sf::FloatRect toggleIconBounds({static_cast<float>(WINDOW_WIDTH) - iconSize - 20.f, 24.f}, {iconSize, iconSize});
-                        if (toggleIconBounds.contains(mousePos)) {
-                            showHowTo = !showHowTo;
-                        }
-                        else if (projects.empty()) {
-                            sf::FloatRect cardBounds({dividerX / 2.f - 160.f, WINDOW_HEIGHT / 2.f - 50.f}, {320.f, 100.f});
-                            if (cardBounds.contains(mousePos)) {
-                                bool isDoubleClick = (lastClickedIndex == 0 && doubleClickClock.getElapsedTime().asMilliseconds() < DOUBLE_CLICK_MS);
-                                doubleClickClock.restart();
-                                lastClickedIndex = 0;
-                                if (isDoubleClick) {
-                                    enteringName = true;
-                                    typingStarted = false;
-                                    projectName = "New Project";
-                                    lastClickedIndex = -1;
+                        if (confirmingDelete) {
+                            sf::FloatRect yesBounds({WINDOW_WIDTH / 2.f - 110.f, WINDOW_HEIGHT / 2.f + 20.f}, {100.f, 36.f});
+                            sf::FloatRect noBounds({WINDOW_WIDTH / 2.f + 10.f, WINDOW_HEIGHT / 2.f + 20.f}, {100.f, 36.f});
+                            if (yesBounds.contains(mousePos)) {
+                                if (pendingDeleteIndex >= 0 && pendingDeleteIndex < static_cast<int>(projects.size())) {
+                                    std::filesystem::remove_all("main/assets/map/" + projects[pendingDeleteIndex].name);
+                                    projects = ScanProjects();
                                 }
+                                confirmingDelete = false;
+                                pendingDeleteIndex = -1;
+                                projectMenuIndex = -1;
+                            } else if (noBounds.contains(mousePos)) {
+                                confirmingDelete = false;
+                                pendingDeleteIndex = -1;
                             }
-                        } else {
-                            float listX = 40.f;
-                            float listY = 110.f;
-                            float rowHeight = 56.f;
-
-                            for (int i = -1; i < static_cast<int>(projects.size()); ++i) {
-                                int itemIndex = i + 1;
-                                float y = listY + itemIndex * rowHeight - listScrollOffset;
-                                sf::FloatRect rowBounds({listX, y}, {dividerX - 60.f, rowHeight - 8.f});
-                                if (rowBounds.contains(mousePos)) {
-                                    selectedIndex = itemIndex;
-
-                                    bool isDoubleClick = (lastClickedIndex == itemIndex && doubleClickClock.getElapsedTime().asMilliseconds() < DOUBLE_CLICK_MS);
+                        }
+                        else if (renamingProject) {
+                            sf::FloatRect okBounds({WINDOW_WIDTH / 2.f - 110.f, WINDOW_HEIGHT / 2.f + 20.f}, {100.f, 36.f});
+                            sf::FloatRect cancelBounds({WINDOW_WIDTH / 2.f + 10.f, WINDOW_HEIGHT / 2.f + 20.f}, {100.f, 36.f});
+                            if (okBounds.contains(mousePos)) {
+                                bool validName = renameBuffer.size() >= 4 && renameBuffer.size() <= 16;
+                                if (validName && renamingIndex >= 0 && renamingIndex < static_cast<int>(projects.size())) {
+                                    std::filesystem::rename("main/assets/map/" + projects[renamingIndex].name,
+                                                             "main/assets/map/" + renameBuffer);
+                                    projects = ScanProjects();
+                                    renamingProject = false;
+                                    projectMenuIndex = -1;
+                                }
+                            } else if (cancelBounds.contains(mousePos)) {
+                                renamingProject = false;
+                            }
+                        }
+                        else if (projectMenuIndex != -1) {
+                            float menuRowY = listY + (projectMenuIndex + 1) * rowHeight - listScrollOffset;
+                            sf::FloatRect renameBounds({dividerX - 190.f, menuRowY + rowHeight - 8.f}, {170.f, 34.f});
+                            sf::FloatRect deleteBounds({dividerX - 190.f, menuRowY + rowHeight + 28.f}, {170.f, 34.f});
+                            if (renameBounds.contains(mousePos)) {
+                                renamingProject = true;
+                                renamingIndex = projectMenuIndex;
+                                renameBuffer = projects[projectMenuIndex].name;
+                                renameTypingStarted = false;
+                            } else if (deleteBounds.contains(mousePos)) {
+                                confirmingDelete = true;
+                                pendingDeleteIndex = projectMenuIndex;
+                            } else {
+                                projectMenuIndex = -1;
+                            }
+                        }
+                        else {
+                            float iconSize = 22.f;
+                            sf::FloatRect toggleIconBounds({static_cast<float>(WINDOW_WIDTH) - iconSize - 20.f, 24.f}, {iconSize, iconSize});
+                            if (toggleIconBounds.contains(mousePos)) {
+                                showHowTo = !showHowTo;
+                            }
+                            else if (projects.empty()) {
+                                sf::FloatRect cardBounds({dividerX / 2.f - 160.f, WINDOW_HEIGHT / 2.f - 50.f}, {320.f, 100.f});
+                                if (cardBounds.contains(mousePos)) {
+                                    bool isDoubleClick = (lastClickedIndex == 0 && doubleClickClock.getElapsedTime().asMilliseconds() < DOUBLE_CLICK_MS);
                                     doubleClickClock.restart();
-                                    lastClickedIndex = itemIndex;
-
+                                    lastClickedIndex = 0;
                                     if (isDoubleClick) {
-                                        if (i == -1) {
-                                            enteringName = true;
-                                            typingStarted = false;
-                                            projectName = "New Project";
-                                        } else {
-                                            projectName = projects[i].name;
-                                            creatingProject = false;
-                                        }
+                                        enteringName = true;
+                                        typingStarted = false;
+                                        projectName = "New Project";
                                         lastClickedIndex = -1;
                                     }
-                                    break;
+                                }
+                            } else {
+                                bool hitSomething = false;
+                                for (int i = 0; i < static_cast<int>(projects.size()); ++i) {
+                                    int itemIndex = i + 1;
+                                    float y = listY + itemIndex * rowHeight - listScrollOffset;
+                                    sf::FloatRect iconBounds(
+                                        {listX + (dividerX - 60.f) - iconBtnSize - 16.f, y + (rowHeight - 8.f) / 2.f - iconBtnSize / 2.f},
+                                        {iconBtnSize, iconBtnSize});
+                                    if (iconBounds.contains(mousePos)) {
+                                        projectMenuIndex = (projectMenuIndex == i) ? -1 : i;
+                                        hitSomething = true;
+                                        break;
+                                    }
+                                }
+
+                                if (!hitSomething) {
+                                    for (int i = -1; i < static_cast<int>(projects.size()); ++i) {
+                                        int itemIndex = i + 1;
+                                        float y = listY + itemIndex * rowHeight - listScrollOffset;
+                                        sf::FloatRect rowBounds({listX, y}, {dividerX - 60.f, rowHeight - 8.f});
+                                        if (rowBounds.contains(mousePos)) {
+                                            selectedIndex = itemIndex;
+
+                                            bool isDoubleClick = (lastClickedIndex == itemIndex && doubleClickClock.getElapsedTime().asMilliseconds() < DOUBLE_CLICK_MS);
+                                            doubleClickClock.restart();
+                                            lastClickedIndex = itemIndex;
+
+                                            if (isDoubleClick) {
+                                                if (i == -1) {
+                                                    enteringName = true;
+                                                    typingStarted = false;
+                                                    projectName = "New Project";
+                                                } else {
+                                                    projectName = projects[i].name;
+                                                    creatingProject = false;
+                                                }
+                                                lastClickedIndex = -1;
+                                            }
+                                            break;
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -274,7 +433,14 @@ int main() {
             }
         }
 
+        float dt = homeAnimClock.restart().asSeconds();
+        float howToTarget = showHowTo ? 1.f : 0.f;
+        float animSpeed = 6.f; // higher = snappier slide
+        howToAnim += (howToTarget - howToAnim) * std::min(1.f, dt * animSpeed);
+        if (std::abs(howToAnim - howToTarget) < 0.002f) howToAnim = howToTarget;
+
         window.clear(sf::Color(20, 20, 24));
+        window.setView(homeView);
 
         if (titleFontLoaded) {
             sf::Text title(titleFont, "Zero Theory - Map Editor", 32);
@@ -288,7 +454,7 @@ int main() {
             window.draw(title);
         }
 
-        float dividerX = WINDOW_WIDTH * 0.62f;
+                        float dividerX = (WINDOW_WIDTH - 60.f) + (WINDOW_WIDTH * 0.62f - (WINDOW_WIDTH - 60.f)) * howToAnim;
 
         if (uiFontLoaded) {
             if (enteringName) {
@@ -387,12 +553,54 @@ int main() {
             divider.setFillColor(sf::Color(60, 60, 66));
             window.draw(divider);
 
-            if (showHowTo) {
+            if (!projects.empty() && !enteringName) {
+                float listY = 110.f;
+                float rowHeight = 56.f;
+                float viewHeight = WINDOW_HEIGHT - listY;
+                float contentHeight = static_cast<float>(projects.size() + 1) * rowHeight;
+                if (contentHeight > viewHeight) {
+                    float trackX = dividerX - 14.f;
+                    sf::RectangleShape track({4.f, viewHeight});
+                    track.setPosition({trackX, listY});
+                    track.setFillColor(sf::Color(45, 45, 50));
+                    window.draw(track);
+
+                    float thumbHeight = std::max(24.f, viewHeight * (viewHeight / contentHeight));
+                    float maxScroll = contentHeight - viewHeight;
+                    float thumbY = listY + (listScrollOffset / maxScroll) * (viewHeight - thumbHeight);
+                    sf::RectangleShape thumb({4.f, thumbHeight});
+                    thumb.setPosition({trackX, thumbY});
+                    thumb.setFillColor(sf::Color(120, 120, 230));
+                    window.draw(thumb);
+                }
+            }
+
+            if (howToAnim > 0.01f) {
                 sf::Text howTo(uiFont, howToUseText, 16);
                 howTo.setFillColor(sf::Color(210, 210, 215));
-                howTo.setPosition({dividerX + 30.f, 30.f});
+                howTo.setPosition({dividerX + 30.f, 30.f - howToScrollOffset});
                 howTo.setLineSpacing(1.2f);
                 window.draw(howTo);
+
+                float howToViewHeight = static_cast<float>(WINDOW_HEIGHT) - 60.f;
+                float howToLineCount = 1.f;
+                for (char ch : howToUseText) if (ch == '\n') howToLineCount += 1.f;
+                float howToContentHeight = howToLineCount * 16.f * 1.2f;
+                if (howToContentHeight > howToViewHeight) {
+                    float trackX2 = static_cast<float>(WINDOW_WIDTH) - 10.f;
+                    sf::RectangleShape track2({4.f, howToViewHeight});
+                    track2.setPosition({trackX2, 30.f});
+                    track2.setFillColor(sf::Color(45, 45, 50));
+                    window.draw(track2);
+
+                    float thumbHeight2 = std::max(24.f, howToViewHeight * (howToViewHeight / howToContentHeight));
+                    float maxHowToScroll2 = howToContentHeight - howToViewHeight;
+                    float thumbY2 = 30.f + (howToScrollOffset / maxHowToScroll2) * (howToViewHeight - thumbHeight2);
+                    sf::RectangleShape thumb2({4.f, thumbHeight2});
+                    thumb2.setPosition({trackX2, thumbY2});
+                    thumb2.setFillColor(sf::Color(120, 120, 230));
+                    window.draw(thumb2);
+                }
 
                 if (closeIconLoaded) {
                     sf::Sprite closeSprite(closeIconTexture);
@@ -411,6 +619,135 @@ int main() {
                 reopenSprite.setScale({scale, scale});
                 reopenSprite.setPosition({static_cast<float>(WINDOW_WIDTH) - iconSize2 - 20.f, 24.f});
                 window.draw(reopenSprite);
+            }
+        }
+
+        if (uiFontLoaded && (projectMenuIndex != -1 || confirmingDelete || renamingProject)) {
+            float dividerXNow = (WINDOW_WIDTH - 60.f) + (WINDOW_WIDTH * 0.62f - (WINDOW_WIDTH - 60.f)) * howToAnim;
+            float listY = 110.f;
+            float rowHeight = 56.f;
+
+            if (projectMenuIndex != -1 && !confirmingDelete && !renamingProject) {
+                float menuRowY = listY + (projectMenuIndex + 1) * rowHeight - listScrollOffset;
+                float menuX = dividerXNow - 190.f;
+                float menuTop = menuRowY + rowHeight - 8.f;
+                float menuIconSize = 16.f;
+
+                sf::RectangleShape menuBg({170.f, 68.f});
+                menuBg.setPosition({menuX, menuTop});
+                menuBg.setFillColor(sf::Color(40, 40, 46));
+                menuBg.setOutlineThickness(1.f);
+                menuBg.setOutlineColor(sf::Color(90, 90, 240));
+                window.draw(menuBg);
+
+                if (editIconLoaded) {
+                    sf::Sprite editSprite(editIconTexture);
+                    sf::Vector2u texSize = editIconTexture.getSize();
+                    float scale = (texSize.x > 0) ? (menuIconSize / static_cast<float>(texSize.x)) : 1.f;
+                    editSprite.setScale({scale, scale});
+                    editSprite.setPosition({menuX + 12.f, menuTop + 8.f});
+                    window.draw(editSprite);
+                }
+                sf::Text renameLabel(uiFont, "Rename", 18);
+                renameLabel.setFillColor(sf::Color::White);
+                renameLabel.setPosition({menuX + 12.f + menuIconSize + 10.f, menuTop + 4.f});
+                window.draw(renameLabel);
+
+                sf::RectangleShape separator({170.f, 1.f});
+                separator.setPosition({menuX, menuTop + 34.f});
+                separator.setFillColor(sf::Color(70, 70, 78));
+                window.draw(separator);
+
+                if (deleteIconLoaded) {
+                    sf::Sprite deleteSprite(deleteIconTexture);
+                    sf::Vector2u texSize = deleteIconTexture.getSize();
+                    float scale = (texSize.x > 0) ? (menuIconSize / static_cast<float>(texSize.x)) : 1.f;
+                    deleteSprite.setScale({scale, scale});
+                    deleteSprite.setColor(sf::Color(230, 90, 90));
+                    deleteSprite.setPosition({menuX + 12.f, menuTop + 42.f});
+                    window.draw(deleteSprite);
+                }
+                sf::Text deleteLabel(uiFont, "Delete", 18);
+                deleteLabel.setFillColor(sf::Color(230, 90, 90));
+                deleteLabel.setPosition({menuX + 12.f + menuIconSize + 10.f, menuTop + 38.f});
+                window.draw(deleteLabel);
+            }
+
+            if (confirmingDelete) {
+                sf::RectangleShape overlay({static_cast<float>(WINDOW_WIDTH), static_cast<float>(WINDOW_HEIGHT)});
+                overlay.setFillColor(sf::Color(0, 0, 0, 150));
+                window.draw(overlay);
+
+                sf::RectangleShape dialog({340.f, 130.f});
+                dialog.setPosition({WINDOW_WIDTH / 2.f - 170.f, WINDOW_HEIGHT / 2.f - 60.f});
+                dialog.setFillColor(sf::Color(38, 38, 44));
+                dialog.setOutlineThickness(2.f);
+                dialog.setOutlineColor(sf::Color(230, 90, 90));
+                window.draw(dialog);
+
+                sf::Text question(uiFont, "Are you sure?", 22);
+                question.setPosition({WINDOW_WIDTH / 2.f - question.getLocalBounds().size.x / 2.f, WINDOW_HEIGHT / 2.f - 40.f});
+                question.setFillColor(sf::Color::White);
+                window.draw(question);
+
+                sf::RectangleShape yesBtn({100.f, 36.f});
+                yesBtn.setPosition({WINDOW_WIDTH / 2.f - 110.f, WINDOW_HEIGHT / 2.f + 20.f});
+                yesBtn.setFillColor(sf::Color(230, 90, 90));
+                window.draw(yesBtn);
+                sf::Text yesLabel(uiFont, "Delete", 18);
+                yesLabel.setFillColor(sf::Color::White);
+                yesLabel.setPosition({WINDOW_WIDTH / 2.f - 110.f + 20.f, WINDOW_HEIGHT / 2.f + 26.f});
+                window.draw(yesLabel);
+
+                sf::RectangleShape noBtn({100.f, 36.f});
+                noBtn.setPosition({WINDOW_WIDTH / 2.f + 10.f, WINDOW_HEIGHT / 2.f + 20.f});
+                noBtn.setFillColor(sf::Color(70, 70, 78));
+                window.draw(noBtn);
+                sf::Text noLabel(uiFont, "Cancel", 18);
+                noLabel.setFillColor(sf::Color::White);
+                noLabel.setPosition({WINDOW_WIDTH / 2.f + 10.f + 20.f, WINDOW_HEIGHT / 2.f + 26.f});
+                window.draw(noLabel);
+            }
+
+            if (renamingProject) {
+                sf::RectangleShape overlay({static_cast<float>(WINDOW_WIDTH), static_cast<float>(WINDOW_HEIGHT)});
+                overlay.setFillColor(sf::Color(0, 0, 0, 150));
+                window.draw(overlay);
+
+                sf::RectangleShape dialog({380.f, 140.f});
+                dialog.setPosition({WINDOW_WIDTH / 2.f - 190.f, WINDOW_HEIGHT / 2.f - 65.f});
+                dialog.setFillColor(sf::Color(38, 38, 44));
+                dialog.setOutlineThickness(2.f);
+                dialog.setOutlineColor(sf::Color(90, 90, 240));
+                window.draw(dialog);
+
+                sf::Text label(uiFont, "Rename Project (4-16 chars)", 16);
+                label.setFillColor(sf::Color(150, 150, 160));
+                label.setPosition({WINDOW_WIDTH / 2.f - 170.f, WINDOW_HEIGHT / 2.f - 50.f});
+                window.draw(label);
+
+                sf::Text nameText(uiFont, renameBuffer + "_", 24);
+                nameText.setFillColor(sf::Color::White);
+                nameText.setPosition({WINDOW_WIDTH / 2.f - 170.f, WINDOW_HEIGHT / 2.f - 20.f});
+                window.draw(nameText);
+
+                sf::RectangleShape okBtn({100.f, 36.f});
+                okBtn.setPosition({WINDOW_WIDTH / 2.f - 110.f, WINDOW_HEIGHT / 2.f + 20.f});
+                okBtn.setFillColor(sf::Color(90, 160, 90));
+                window.draw(okBtn);
+                sf::Text okLabel(uiFont, "Save", 18);
+                okLabel.setFillColor(sf::Color::White);
+                okLabel.setPosition({WINDOW_WIDTH / 2.f - 110.f + 30.f, WINDOW_HEIGHT / 2.f + 26.f});
+                window.draw(okLabel);
+
+                sf::RectangleShape cancelBtn({100.f, 36.f});
+                cancelBtn.setPosition({WINDOW_WIDTH / 2.f + 10.f, WINDOW_HEIGHT / 2.f + 20.f});
+                cancelBtn.setFillColor(sf::Color(70, 70, 78));
+                window.draw(cancelBtn);
+                sf::Text cancelLabel(uiFont, "Cancel", 18);
+                cancelLabel.setFillColor(sf::Color::White);
+                cancelLabel.setPosition({WINDOW_WIDTH / 2.f + 10.f + 20.f, WINDOW_HEIGHT / 2.f + 26.f});
+                window.draw(cancelLabel);
             }
         }
 
