@@ -154,6 +154,8 @@ int main() {
     bool renameTypingStarted = false;
 
     sf::Clock cursorBlinkClock;
+    float contextMenuAnchorX = 0.f;
+    float contextMenuAnchorY = 0.f;
     std::string createNameError;
     std::string renameNameError;
     sf::Clock createErrorClock;
@@ -226,9 +228,6 @@ int main() {
                         if (!allowed) {
                             renameNameError = "[Error!] Only letters, numbers, _ and space allowed";
                             renameErrorClock.restart();
-                        } else if (renameBuffer.size() >= 16) {
-                            renameNameError = "[Error!] Max 16 characters";
-                            renameErrorClock.restart();
                         } else {
                             renameBuffer += c;
                         }
@@ -239,7 +238,7 @@ int main() {
                         renamingProject = false;
                     }
                     else if (keyPressed->code == sf::Keyboard::Key::Enter) {
-                        if (renameBuffer.size() >= 4 && renameBuffer.size() <= 16 &&
+                        if (!renameBuffer.empty() &&
                             renamingIndex >= 0 && renamingIndex < static_cast<int>(projects.size())) {
                             std::filesystem::rename("main/assets/map/" + projects[renamingIndex].name,
                                                      "main/assets/map/" + renameBuffer);
@@ -247,7 +246,7 @@ int main() {
                             renamingProject = false;
                             projectMenuIndex = -1;
                         } else {
-                            renameNameError = "[Error!] Name must be 4-16 characters";
+                            renameNameError = "[Error!] Name cannot be empty";
                             renameErrorClock.restart();
                         }
                     }
@@ -255,6 +254,7 @@ int main() {
             }
 
             if (const auto* wheelScrolled = event->getIf<sf::Event::MouseWheelScrolled>()) {
+                projectMenuIndex = -1;
                 sf::Vector2f wheelWorldPos = window.mapPixelToCoords(wheelScrolled->position, homeView);
                 float dividerXNow = (WINDOW_WIDTH - 60.f) + (WINDOW_WIDTH * 0.62f - (WINDOW_WIDTH - 60.f)) * howToAnim;
 
@@ -303,9 +303,6 @@ int main() {
                         if (!allowed) {
                             createNameError = "[Error!] Only letters, numbers, _ and space allowed";
                             createErrorClock.restart();
-                        } else if (projectName.size() >= 16) {
-                            createNameError = "[Error!] Max 16 characters";
-                            createErrorClock.restart();
                         } else {
                             projectName += c;
                         }
@@ -313,11 +310,11 @@ int main() {
                 }
                 if (const auto* keyPressed = event->getIf<sf::Event::KeyPressed>()) {
                     if (keyPressed->code == sf::Keyboard::Key::Enter) {
-                        if (projectName.size() >= 4 && projectName.size() <= 16) {
+                        if (!projectName.empty()) {
                             isNewProjectCreation = true;
                             creatingProject = false;
                         } else {
-                            createNameError = "[Error!] Name must be 4-16 characters";
+                            createNameError = "[Error!] Name cannot be empty";
                             createErrorClock.restart();
                         }
                     }
@@ -329,27 +326,45 @@ int main() {
                 }
             }
             else {
-                if (const auto* keyPressed = event->getIf<sf::Event::KeyPressed>()) {
-                    int itemCount = static_cast<int>(projects.size()) + 1;
-                    if (keyPressed->code == sf::Keyboard::Key::Up) {
-                        selectedIndex = (selectedIndex - 1 + itemCount) % itemCount;
-                    }
-                    else if (keyPressed->code == sf::Keyboard::Key::Down) {
-                        selectedIndex = (selectedIndex + 1) % itemCount;
-                    }
-                    else if (keyPressed->code == sf::Keyboard::Key::Enter) {
-                        if (selectedIndex == 0) {
-                            enteringName = true;
-                            typingStarted = false;
-                            projectName = "New Project";
-                        } else {
-                            projectName = projects[selectedIndex - 1].name;
-                            creatingProject = false;
+                if (!renamingProject && !confirmingDelete) {
+                    if (const auto* keyPressed = event->getIf<sf::Event::KeyPressed>()) {
+                        int itemCount = static_cast<int>(projects.size()) + 1;
+                        if (keyPressed->code == sf::Keyboard::Key::Up) {
+                            selectedIndex = (selectedIndex - 1 + itemCount) % itemCount;
+                        }
+                        else if (keyPressed->code == sf::Keyboard::Key::Down) {
+                            selectedIndex = (selectedIndex + 1) % itemCount;
+                        }
+                        else if (keyPressed->code == sf::Keyboard::Key::Enter) {
+                            if (selectedIndex == 0) {
+                                enteringName = true;
+                                typingStarted = false;
+                                projectName = "New Project";
+                            } else {
+                                projectName = projects[selectedIndex - 1].name;
+                                creatingProject = false;
+                            }
                         }
                     }
                 }
 
                 if (const auto* mousePressed = event->getIf<sf::Event::MouseButtonPressed>()) {
+                    if (mousePressed->button == sf::Mouse::Button::Right && !projects.empty() && !renamingProject && !confirmingDelete) {
+                        sf::Vector2f rightClickPos = window.mapPixelToCoords(mousePressed->position, homeView);
+                        float listY = 110.f;
+                        float rowHeight = 56.f;
+                        for (int i = 0; i < static_cast<int>(projects.size()); ++i) {
+                            int itemIndex = i + 1;
+                            float y = listY + itemIndex * rowHeight - listScrollOffset;
+                            sf::FloatRect rowBounds({40.f, y}, {static_cast<float>(WINDOW_WIDTH), rowHeight - 8.f});
+                            if (rowBounds.contains(rightClickPos)) {
+                                projectMenuIndex = i;
+                                contextMenuAnchorX = rightClickPos.x;
+                                contextMenuAnchorY = rightClickPos.y;
+                                break;
+                            }
+                        }
+                    }
                     if (mousePressed->button == sf::Mouse::Button::Left) {
                         sf::Vector2f mousePos = window.mapPixelToCoords(mousePressed->position, homeView);
                         float dividerX = (WINDOW_WIDTH - 60.f) + (WINDOW_WIDTH * 0.62f - (WINDOW_WIDTH - 60.f)) * howToAnim;
@@ -378,7 +393,7 @@ int main() {
                             sf::FloatRect okBounds({WINDOW_WIDTH / 2.f - 110.f, WINDOW_HEIGHT / 2.f + 20.f}, {100.f, 36.f});
                             sf::FloatRect cancelBounds({WINDOW_WIDTH / 2.f + 10.f, WINDOW_HEIGHT / 2.f + 20.f}, {100.f, 36.f});
                             if (okBounds.contains(mousePos)) {
-                                bool validName = renameBuffer.size() >= 4 && renameBuffer.size() <= 16;
+                                bool validName = !renameBuffer.empty();
                                 if (validName && renamingIndex >= 0 && renamingIndex < static_cast<int>(projects.size())) {
                                     std::filesystem::rename("main/assets/map/" + projects[renamingIndex].name,
                                                              "main/assets/map/" + renameBuffer);
@@ -391,15 +406,24 @@ int main() {
                             }
                         }
                         else if (projectMenuIndex != -1) {
-                            float menuRowY = listY + (projectMenuIndex + 1) * rowHeight - listScrollOffset;
                             float menuIconSize2 = 16.f;
                             float rowH2 = menuIconSize2 + 6.f * 2.f;
                             sf::Text measureRename(uiFont, "Rename", 18);
                             sf::Text measureDelete(uiFont, "Delete", 18);
                             float textW2 = std::max(measureRename.getLocalBounds().size.x, measureDelete.getLocalBounds().size.x);
                             float menuWidth2 = 10.f + menuIconSize2 + 8.f + textW2 + 10.f;
-                            float menuX2 = dividerX - menuWidth2 - 20.f;
-                            float menuTop2 = menuRowY + rowHeight - 8.f;
+                            float menuX2 = contextMenuAnchorX;
+                            float menuTop2 = contextMenuAnchorY;
+                            float menuHeight2 = rowH2 * 2.f;
+                            float menuMargin2 = 8.f;
+                            if (menuX2 < menuMargin2) menuX2 = menuMargin2;
+                            if (menuX2 + menuWidth2 > static_cast<float>(WINDOW_WIDTH) - menuMargin2) {
+                                menuX2 = static_cast<float>(WINDOW_WIDTH) - menuWidth2 - menuMargin2;
+                            }
+                            if (menuTop2 + menuHeight2 > static_cast<float>(WINDOW_HEIGHT) - menuMargin2) {
+                                menuTop2 = contextMenuAnchorY - menuHeight2 - 4.f;
+                            }
+                            if (menuTop2 < menuMargin2) menuTop2 = menuMargin2;
                             sf::FloatRect renameBounds({menuX2, menuTop2}, {menuWidth2, rowH2});
                             sf::FloatRect deleteBounds({menuX2, menuTop2 + rowH2}, {menuWidth2, rowH2});
                             if (renameBounds.contains(mousePos)) {
@@ -443,6 +467,8 @@ int main() {
                                         {iconBtnSize, iconBtnSize});
                                     if (iconBounds.contains(mousePos)) {
                                         projectMenuIndex = (projectMenuIndex == i) ? -1 : i;
+                                        contextMenuAnchorX = mousePos.x;
+                                        contextMenuAnchorY = mousePos.y;
                                         hitSomething = true;
                                         break;
                                     }
@@ -481,6 +507,7 @@ int main() {
                 }
             }
         }
+    
 
         float dt = homeAnimClock.restart().asSeconds();
         float howToTarget = showHowTo ? 1.f : 0.f;
@@ -514,7 +541,7 @@ int main() {
                 card.setPosition({dividerX / 2.f - 240.f, WINDOW_HEIGHT / 2.f - 45.f});
                 window.draw(card);
 
-                sf::Text label(uiFont, "Project Name (4-16)", 18);
+                sf::Text label(uiFont, "Project Name", 18);
                 label.setFillColor(sf::Color(150, 150, 160));
                 label.setPosition({dividerX / 2.f - 220.f, WINDOW_HEIGHT / 2.f - 35.f});
                 window.draw(label);
@@ -685,7 +712,6 @@ int main() {
             float rowHeight = 56.f;
 
             if (projectMenuIndex != -1 && !confirmingDelete && !renamingProject) {
-                float menuRowY = listY + (projectMenuIndex + 1) * rowHeight - listScrollOffset;
                 float menuIconSize = 16.f;
                 float iconTextGap = 8.f;
                 float sidePad = 10.f;
@@ -701,8 +727,18 @@ int main() {
                 float menuWidth = sidePad + menuIconSize + iconTextGap + textW + sidePad;
                 float menuHeight = rowH * 2.f;
 
-                float menuX = dividerXNow - menuWidth - 20.f;
-                float menuTop = menuRowY + rowHeight - 8.f;
+                float menuX = contextMenuAnchorX;
+                float menuTop = contextMenuAnchorY;
+
+                float menuMargin = 8.f;
+                if (menuX < menuMargin) menuX = menuMargin;
+                if (menuX + menuWidth > static_cast<float>(WINDOW_WIDTH) - menuMargin) {
+                    menuX = static_cast<float>(WINDOW_WIDTH) - menuWidth - menuMargin;
+                }
+                if (menuTop + menuHeight > static_cast<float>(WINDOW_HEIGHT) - menuMargin) {
+                    menuTop = contextMenuAnchorY - menuHeight - 4.f; // flip upward if it would overflow the bottom
+                }
+                if (menuTop < menuMargin) menuTop = menuMargin;
 
                 sf::RectangleShape menuBg({menuWidth, menuHeight});
                 menuBg.setPosition({menuX, menuTop});
@@ -799,7 +835,7 @@ int main() {
                 dialog.setOutlineColor(sf::Color(90, 90, 240));
                 window.draw(dialog);
 
-                sf::Text label(uiFont, "Rename Project (4-16 chars)", 16);
+                sf::Text label(uiFont, "Rename Project", 16);
                 label.setFillColor(sf::Color(150, 150, 160));
                 label.setPosition({WINDOW_WIDTH / 2.f - 170.f, WINDOW_HEIGHT / 2.f - 50.f});
                 window.draw(label);
