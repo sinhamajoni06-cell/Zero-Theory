@@ -12,7 +12,7 @@ A undesigned game.
     <td align="left"><b>All Assets</b>: (<a href="https://github.com/sinhamajoni06-cell/Zero-Theory/blob/main/main/assets/images/temp.zip"><code>temp.zip</code></a>)</td>
     <td align="right"><a href="https://github.com/sinhamajoni06-cell/Zero-Theory/raw/refs/heads/main/main/assets/images/temp.zip">Download</a></td>
   </tr>
-  <td align="left"><b>Zero-Theory (`v0.1.0`)</b>: (<a href="https://github.com/sinhamajoni06-cell/Zero-Theory/releases#release-v0.1.0"><code>ZeroTheory.zip</code></a>)</td>
+  <td align="left"><b>Zero-Theory (`v0.2.0`)</b>: (<a href="https://github.com/sinhamajoni06-cell/Zero-Theory/releases#release-v0.2.0"><code>ZeroTheory.zip</code></a>)</td>
     <td align="right"><a href="https://github.com/sinhamajoni06-cell/Zero-Theory/releases/download/v0.1.0/ZeroTheory.zip">Download</a></td>
   </tr>
 </table>
