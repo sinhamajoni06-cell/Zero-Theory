@@ -59,17 +59,19 @@ Zero-Theory-core/
   pacman -S mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-sfml
   ```
 - Now you have install `G++` and `SFML`, just run the ***build.bat*** file.
-- It will create `ZeroTheory.exe` and other files and folders at-
+- It will create `ZeroTheory.exe` **/** `MapEditor.exe` and other files and folders at-
   ```
   ZeroTheory/
-  ├── ZeroTheory.exe         # This is the main exe game file, you need to run to play the game
-  ├── *sfml*.dll
-  ├── libfreetype-6.dll
-  ├── libgcc_s_seh-1.dll
-  ├── libstdc++-6.dll
-  ├── libwinpthread-1.dll
-  └── main/                  # All Games materials are in here
-      └── assets/
+  ├── MapEditor.exe          # Executable for launching the Map Editor tool
+  ├── ZeroTheory.exe         # Main executable for playing the game
+  ├── *sfml*.dll             # SFML runtime libraries (graphics, window, system)
+  ├── libfreetype-6.dll      # FreeType font rendering library
+  ├── libgcc_s_seh-1.dll     # GCC C runtime library
+  ├── libstdc++-6.dll        # C++ Standard Library runtime
+  ├── libwinpthread-1.dll    # POSIX threads support library
+  └── main/                  # Core game materials and resources
+    └── assets/            # Main asset directory
+        └── map/           # Map data and editor workspace assets
   ```
   ## Development Worning-
 
