@@ -125,6 +125,7 @@ int main() {
     sf::Clock doubleClickClock;
     const float DOUBLE_CLICK_MS = 350.f;
     float listScrollOffset = 0.f;
+    float listScrollTarget = 0.f;
     bool showHowTo = true;
     float howToAnim = 1.f; // 0 = fully closed, 1 = fully open
     sf::Clock homeAnimClock;
@@ -268,10 +269,10 @@ int main() {
                     if (howToScrollOffset < 0.f) howToScrollOffset = 0.f;
                     if (howToScrollOffset > maxHowToScroll) howToScrollOffset = maxHowToScroll;
                 } else {
-                    listScrollOffset -= wheelScrolled->delta * 30.f;
-                    if (listScrollOffset < 0.f) listScrollOffset = 0.f;
-                    float maxScroll = std::max(0.f, static_cast<float>(projects.size() + 1) * 56.f - (WINDOW_HEIGHT - 110.f));
-                    if (listScrollOffset > maxScroll) listScrollOffset = maxScroll;
+                    listScrollTarget -= wheelScrolled->delta * 48.f;
+                    if (listScrollTarget < 0.f) listScrollTarget = 0.f;
+                    float maxScroll = std::max(0.f, static_cast<float>(projects.size()) * 56.f - (WINDOW_HEIGHT - 110.f - 56.f));
+                    if (listScrollTarget > maxScroll) listScrollTarget = maxScroll;
                 }
             }
 
@@ -354,8 +355,7 @@ int main() {
                         float listY = 110.f;
                         float rowHeight = 56.f;
                         for (int i = 0; i < static_cast<int>(projects.size()); ++i) {
-                            int itemIndex = i + 1;
-                            float y = listY + itemIndex * rowHeight - listScrollOffset;
+                            float y = listY + rowHeight + i * rowHeight - listScrollOffset;
                             sf::FloatRect rowBounds({40.f, y}, {static_cast<float>(WINDOW_WIDTH), rowHeight - 8.f});
                             if (rowBounds.contains(rightClickPos)) {
                                 projectMenuIndex = i;
@@ -460,8 +460,7 @@ int main() {
                             } else {
                                 bool hitSomething = false;
                                 for (int i = 0; i < static_cast<int>(projects.size()); ++i) {
-                                    int itemIndex = i + 1;
-                                    float y = listY + itemIndex * rowHeight - listScrollOffset;
+                                    float y = listY + rowHeight + i * rowHeight - listScrollOffset;
                                     sf::FloatRect iconBounds(
                                         {listX + (dividerX - 60.f) - iconBtnSize - 16.f, y + (rowHeight - 8.f) / 2.f - iconBtnSize / 2.f},
                                         {iconBtnSize, iconBtnSize});
@@ -475,9 +474,26 @@ int main() {
                                 }
 
                                 if (!hitSomething) {
-                                    for (int i = -1; i < static_cast<int>(projects.size()); ++i) {
+                                    sf::FloatRect createRowBounds({listX, listY}, {dividerX - 60.f, rowHeight - 8.f});
+                                    if (createRowBounds.contains(mousePos)) {
+                                        selectedIndex = 0;
+                                        bool isDoubleClick = (lastClickedIndex == 0 && doubleClickClock.getElapsedTime().asMilliseconds() < DOUBLE_CLICK_MS);
+                                        doubleClickClock.restart();
+                                        lastClickedIndex = 0;
+                                        if (isDoubleClick) {
+                                            enteringName = true;
+                                            typingStarted = false;
+                                            projectName = "New Project";
+                                            lastClickedIndex = -1;
+                                        }
+                                        hitSomething = true;
+                                    }
+                                }
+
+                                if (!hitSomething) {
+                                    for (int i = 0; i < static_cast<int>(projects.size()); ++i) {
                                         int itemIndex = i + 1;
-                                        float y = listY + itemIndex * rowHeight - listScrollOffset;
+                                        float y = listY + rowHeight + i * rowHeight - listScrollOffset;
                                         sf::FloatRect rowBounds({listX, y}, {dividerX - 60.f, rowHeight - 8.f});
                                         if (rowBounds.contains(mousePos)) {
                                             selectedIndex = itemIndex;
@@ -514,6 +530,10 @@ int main() {
         float animSpeed = 6.f; // higher = snappier slide
         howToAnim += (howToTarget - howToAnim) * std::min(1.f, dt * animSpeed);
         if (std::abs(howToAnim - howToTarget) < 0.002f) howToAnim = howToTarget;
+
+        float scrollSpeed = 12.f; // higher = snappier scroll, lower = smoother/floatier
+        listScrollOffset += (listScrollTarget - listScrollOffset) * std::min(1.f, dt * scrollSpeed);
+        if (std::abs(listScrollOffset - listScrollTarget) < 0.05f) listScrollOffset = listScrollTarget;
 
         window.clear(sf::Color(20, 20, 24));
         window.setView(homeView);
@@ -587,11 +607,14 @@ int main() {
                 float listY = 110.f;
                 float rowHeight = 56.f;
 
-                for (int i = -1; i < static_cast<int>(projects.size()); ++i) {
-                    int itemIndex = i + 1;
-                    float y = listY + itemIndex * rowHeight - listScrollOffset;
-                    if (y < listY - rowHeight || y > WINDOW_HEIGHT) continue;
+                // Scrollable project rows are drawn first, clipped to start
+                // below the pinned "Create New +" row so they never cover it.
+                for (int i = 0; i < static_cast<int>(projects.size()); ++i) {
+                    float y = listY + rowHeight + i * rowHeight - listScrollOffset;
+                    if (y + (rowHeight - 8.f) <= listY + rowHeight) continue; // fully hidden behind pinned row
+                    if (y > WINDOW_HEIGHT) continue;
 
+                    int itemIndex = i + 1;
                     sf::RectangleShape row({dividerX - 60.f, rowHeight - 8.f});
                     row.setPosition({listX, y});
                     bool isSelected = (selectedIndex == itemIndex);
@@ -602,34 +625,43 @@ int main() {
                     }
                     window.draw(row);
 
-                    if (i == -1) {
-                        sf::Text plus(uiFont, "Create New +", 22);
-                        plus.setFillColor(sf::Color::White);
-                        plus.setPosition({listX + 16.f, y + 12.f});
-                        window.draw(plus);
-                    } else {
-                        const ProjectEntry& p = projects[i];
-                        sf::Text nameText(uiFont, p.name, 22);
-                        nameText.setFillColor(sf::Color::White);
-                        nameText.setPosition({listX + 16.f, y + 6.f});
-                        window.draw(nameText);
+                    const ProjectEntry& p = projects[i];
+                    sf::Text nameText(uiFont, p.name, 22);
+                    nameText.setFillColor(sf::Color::White);
+                    nameText.setPosition({listX + 16.f, y + 6.f});
+                    window.draw(nameText);
 
-                        sf::Text sizeText(uiFont, FormatSize(p.sizeBytes), 14);
-                        sizeText.setFillColor(sf::Color(150, 150, 160));
-                        sizeText.setPosition({listX + 16.f, y + 30.f});
-                        window.draw(sizeText);
+                    sf::Text sizeText(uiFont, FormatSize(p.sizeBytes), 14);
+                    sizeText.setFillColor(sf::Color(150, 150, 160));
+                    sizeText.setPosition({listX + 16.f, y + 30.f});
+                    window.draw(sizeText);
 
-                        if (arrowIconLoaded) {
-                            sf::Sprite arrowSprite(arrowIconTexture);
-                            sf::Vector2u texSize = arrowIconTexture.getSize();
-                            float iconSize = 24.f;
-                            float scale = (texSize.x > 0) ? (iconSize / static_cast<float>(texSize.x)) : 1.f;
-                            arrowSprite.setScale({scale, scale});
-                            arrowSprite.setPosition({listX + (dividerX - 60.f) - iconSize - 16.f, y + (rowHeight - 8.f) / 2.f - iconSize / 2.f});
-                            window.draw(arrowSprite);
-                        }
+                    if (arrowIconLoaded) {
+                        sf::Sprite arrowSprite(arrowIconTexture);
+                        sf::Vector2u texSize = arrowIconTexture.getSize();
+                        float iconSize = 24.f;
+                        float scale = (texSize.x > 0) ? (iconSize / static_cast<float>(texSize.x)) : 1.f;
+                        arrowSprite.setScale({scale, scale});
+                        arrowSprite.setPosition({listX + (dividerX - 60.f) - iconSize - 16.f, y + (rowHeight - 8.f) / 2.f - iconSize / 2.f});
+                        window.draw(arrowSprite);
                     }
                 }
+
+                // Pinned "Create New +" row, drawn last so it always sits on top and never scrolls.
+                sf::RectangleShape createRow({dividerX - 60.f, rowHeight - 8.f});
+                createRow.setPosition({listX, listY});
+                bool createSelected = (selectedIndex == 0);
+                createRow.setFillColor(createSelected ? sf::Color(50, 50, 90) : sf::Color(32, 32, 38));
+                if (createSelected) {
+                    createRow.setOutlineThickness(2.f);
+                    createRow.setOutlineColor(sf::Color(90, 90, 240));
+                }
+                window.draw(createRow);
+
+                sf::Text plus(uiFont, "Create New +", 22);
+                plus.setFillColor(sf::Color::White);
+                plus.setPosition({listX + 16.f, listY + 12.f});
+                window.draw(plus);
             }
 
             sf::RectangleShape divider({2.f, static_cast<float>(WINDOW_HEIGHT)});
@@ -640,18 +672,18 @@ int main() {
             if (!projects.empty() && !enteringName) {
                 float listY = 110.f;
                 float rowHeight = 56.f;
-                float viewHeight = WINDOW_HEIGHT - listY;
-                float contentHeight = static_cast<float>(projects.size() + 1) * rowHeight;
+                float viewHeight = WINDOW_HEIGHT - listY - rowHeight;
+                float contentHeight = static_cast<float>(projects.size()) * rowHeight;
                 if (contentHeight > viewHeight) {
                     float trackX = dividerX - 14.f;
                     sf::RectangleShape track({4.f, viewHeight});
-                    track.setPosition({trackX, listY});
+                    track.setPosition({trackX, listY + rowHeight});
                     track.setFillColor(sf::Color(45, 45, 50));
                     window.draw(track);
 
                     float thumbHeight = std::max(24.f, viewHeight * (viewHeight / contentHeight));
                     float maxScroll = contentHeight - viewHeight;
-                    float thumbY = listY + (listScrollOffset / maxScroll) * (viewHeight - thumbHeight);
+                    float thumbY = listY + rowHeight + (listScrollOffset / maxScroll) * (viewHeight - thumbHeight);
                     sf::RectangleShape thumb({4.f, thumbHeight});
                     thumb.setPosition({trackX, thumbY});
                     thumb.setFillColor(sf::Color(120, 120, 230));
