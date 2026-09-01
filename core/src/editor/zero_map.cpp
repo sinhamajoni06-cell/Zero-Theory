@@ -74,6 +74,19 @@ static std::string FormatSize(uintmax_t bytes) {
     return oss.str();
 }
 
+// Recolors an icon by ignoring its own RGB and using only its alpha
+// channel as a mask - required because our icon PNGs are pure black
+// shapes on transparent backgrounds, and black can't be tinted by
+// ordinary color modulation or additive blending (0 stays 0 either way).
+static const char* kIconTintFragmentShader = R"(
+    uniform sampler2D source;
+    uniform vec4 tintColor;
+    void main() {
+        float a = texture2D(source, gl_TexCoord[0].xy).a;
+        gl_FragColor = vec4(tintColor.rgb, tintColor.a * a);
+    }
+)";
+
 // ----------------------------------------------------------
 // Main
 // ----------------------------------------------------------
@@ -125,6 +138,10 @@ int main() {
     sf::Texture deleteIconTexture;
     bool deleteIconLoaded = deleteIconTexture.loadFromFile("main/assets/images/UI/icons/delete.png");
 
+    sf::Shader iconTintShader;
+    bool iconTintShaderLoaded = sf::Shader::isAvailable() &&
+        iconTintShader.loadFromMemory(kIconTintFragmentShader, sf::Shader::Type::Fragment);
+
     float howToScrollOffset = 0.f;
 
     // Per-project context menu / rename / delete confirmation state.
@@ -135,6 +152,12 @@ int main() {
     int renamingIndex = -1;
     std::string renameBuffer;
     bool renameTypingStarted = false;
+
+    sf::Clock cursorBlinkClock;
+    std::string createNameError;
+    std::string renameNameError;
+    sf::Clock createErrorClock;
+    sf::Clock renameErrorClock;
 
     const std::string howToUseText =
         "HOW TO USE\n"
@@ -200,7 +223,15 @@ int main() {
                         char c = static_cast<char>(unicode);
                         bool allowed = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
                                        (c >= '0' && c <= '9') || c == '_' || c == ' ';
-                        if (allowed && renameBuffer.size() < 16) renameBuffer += c;
+                        if (!allowed) {
+                            renameNameError = "[Error!] Only letters, numbers, _ and space allowed";
+                            renameErrorClock.restart();
+                        } else if (renameBuffer.size() >= 16) {
+                            renameNameError = "[Error!] Max 16 characters";
+                            renameErrorClock.restart();
+                        } else {
+                            renameBuffer += c;
+                        }
                     }
                 }
                 if (const auto* keyPressed = event->getIf<sf::Event::KeyPressed>()) {
@@ -215,6 +246,9 @@ int main() {
                             projects = ScanProjects();
                             renamingProject = false;
                             projectMenuIndex = -1;
+                        } else {
+                            renameNameError = "[Error!] Name must be 4-16 characters";
+                            renameErrorClock.restart();
                         }
                     }
                 }
@@ -266,7 +300,13 @@ int main() {
                         char c = static_cast<char>(unicode);
                         bool allowed = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
                                        (c >= '0' && c <= '9') || c == '_' || c == ' ';
-                        if (allowed && projectName.size() < 16) {
+                        if (!allowed) {
+                            createNameError = "[Error!] Only letters, numbers, _ and space allowed";
+                            createErrorClock.restart();
+                        } else if (projectName.size() >= 16) {
+                            createNameError = "[Error!] Max 16 characters";
+                            createErrorClock.restart();
+                        } else {
                             projectName += c;
                         }
                     }
@@ -276,9 +316,10 @@ int main() {
                         if (projectName.size() >= 4 && projectName.size() <= 16) {
                             isNewProjectCreation = true;
                             creatingProject = false;
+                        } else {
+                            createNameError = "[Error!] Name must be 4-16 characters";
+                            createErrorClock.restart();
                         }
-                        // Names shorter than 4 or longer than 16 chars are rejected silently;
-                        // the player stays in the name-entry screen to fix it.
                     }
                     else if (keyPressed->code == sf::Keyboard::Key::Escape) {
                         enteringName = false;
@@ -351,8 +392,16 @@ int main() {
                         }
                         else if (projectMenuIndex != -1) {
                             float menuRowY = listY + (projectMenuIndex + 1) * rowHeight - listScrollOffset;
-                            sf::FloatRect renameBounds({dividerX - 190.f, menuRowY + rowHeight - 8.f}, {170.f, 34.f});
-                            sf::FloatRect deleteBounds({dividerX - 190.f, menuRowY + rowHeight + 28.f}, {170.f, 34.f});
+                            float menuIconSize2 = 16.f;
+                            float rowH2 = menuIconSize2 + 6.f * 2.f;
+                            sf::Text measureRename(uiFont, "Rename", 18);
+                            sf::Text measureDelete(uiFont, "Delete", 18);
+                            float textW2 = std::max(measureRename.getLocalBounds().size.x, measureDelete.getLocalBounds().size.x);
+                            float menuWidth2 = 10.f + menuIconSize2 + 8.f + textW2 + 10.f;
+                            float menuX2 = dividerX - menuWidth2 - 20.f;
+                            float menuTop2 = menuRowY + rowHeight - 8.f;
+                            sf::FloatRect renameBounds({menuX2, menuTop2}, {menuWidth2, rowH2});
+                            sf::FloatRect deleteBounds({menuX2, menuTop2 + rowH2}, {menuWidth2, rowH2});
                             if (renameBounds.contains(mousePos)) {
                                 renamingProject = true;
                                 renamingIndex = projectMenuIndex;
@@ -465,12 +514,13 @@ int main() {
                 card.setPosition({dividerX / 2.f - 240.f, WINDOW_HEIGHT / 2.f - 45.f});
                 window.draw(card);
 
-                sf::Text label(uiFont, "Project Name", 18);
+                sf::Text label(uiFont, "Project Name (4-16)", 18);
                 label.setFillColor(sf::Color(150, 150, 160));
                 label.setPosition({dividerX / 2.f - 220.f, WINDOW_HEIGHT / 2.f - 35.f});
                 window.draw(label);
 
-                sf::Text nameText(uiFont, projectName + "_", 28);
+                bool cursorOn = std::fmod(cursorBlinkClock.getElapsedTime().asSeconds(), 1.f) < 0.5f;
+                sf::Text nameText(uiFont, projectName + (cursorOn ? "_" : " "), 28);
                 nameText.setFillColor(sf::Color::White);
                 nameText.setPosition({dividerX / 2.f - 220.f, WINDOW_HEIGHT / 2.f - 10.f});
                 window.draw(nameText);
@@ -479,6 +529,13 @@ int main() {
                 hint.setFillColor(sf::Color(130, 130, 140));
                 hint.setPosition({dividerX / 2.f - hint.getLocalBounds().size.x / 2.f, WINDOW_HEIGHT / 2.f + 65.f});
                 window.draw(hint);
+
+                if (!createNameError.empty() && createErrorClock.getElapsedTime().asSeconds() < 3.f) {
+                    sf::Text errText(uiFont, createNameError, 15);
+                    errText.setFillColor(sf::Color(230, 90, 90));
+                    errText.setPosition({dividerX / 2.f - errText.getLocalBounds().size.x / 2.f, WINDOW_HEIGHT / 2.f + 90.f});
+                    window.draw(errText);
+                }
             }
             else if (projects.empty()) {
                 sf::RectangleShape card({320.f, 100.f});
@@ -629,11 +686,25 @@ int main() {
 
             if (projectMenuIndex != -1 && !confirmingDelete && !renamingProject) {
                 float menuRowY = listY + (projectMenuIndex + 1) * rowHeight - listScrollOffset;
-                float menuX = dividerXNow - 190.f;
-                float menuTop = menuRowY + rowHeight - 8.f;
                 float menuIconSize = 16.f;
+                float iconTextGap = 8.f;
+                float sidePad = 10.f;
+                float rowPadTop = 6.f;
+                float rowH = menuIconSize + rowPadTop * 2.f;
 
-                sf::RectangleShape menuBg({170.f, 68.f});
+                sf::Text renameLabel(uiFont, "Rename", 18);
+                renameLabel.setFillColor(sf::Color::White);
+                sf::Text deleteLabel(uiFont, "Delete", 18);
+                deleteLabel.setFillColor(sf::Color(230, 90, 90));
+
+                float textW = std::max(renameLabel.getLocalBounds().size.x, deleteLabel.getLocalBounds().size.x);
+                float menuWidth = sidePad + menuIconSize + iconTextGap + textW + sidePad;
+                float menuHeight = rowH * 2.f;
+
+                float menuX = dividerXNow - menuWidth - 20.f;
+                float menuTop = menuRowY + rowHeight - 8.f;
+
+                sf::RectangleShape menuBg({menuWidth, menuHeight});
                 menuBg.setPosition({menuX, menuTop});
                 menuBg.setFillColor(sf::Color(40, 40, 46));
                 menuBg.setOutlineThickness(1.f);
@@ -645,16 +716,20 @@ int main() {
                     sf::Vector2u texSize = editIconTexture.getSize();
                     float scale = (texSize.x > 0) ? (menuIconSize / static_cast<float>(texSize.x)) : 1.f;
                     editSprite.setScale({scale, scale});
-                    editSprite.setPosition({menuX + 12.f, menuTop + 8.f});
-                    window.draw(editSprite);
+                    editSprite.setPosition({menuX + sidePad, menuTop + rowPadTop});
+                    if (iconTintShaderLoaded) {
+                        iconTintShader.setUniform("source", editIconTexture);
+                        iconTintShader.setUniform("tintColor", sf::Glsl::Vec4(1.f, 1.f, 1.f, 1.f));
+                        window.draw(editSprite, &iconTintShader);
+                    } else {
+                        window.draw(editSprite);
+                    }
                 }
-                sf::Text renameLabel(uiFont, "Rename", 18);
-                renameLabel.setFillColor(sf::Color::White);
-                renameLabel.setPosition({menuX + 12.f + menuIconSize + 10.f, menuTop + 4.f});
+                renameLabel.setPosition({menuX + sidePad + menuIconSize + iconTextGap, menuTop + rowPadTop - 3.f});
                 window.draw(renameLabel);
 
-                sf::RectangleShape separator({170.f, 1.f});
-                separator.setPosition({menuX, menuTop + 34.f});
+                sf::RectangleShape separator({menuWidth, 1.f});
+                separator.setPosition({menuX, menuTop + rowH});
                 separator.setFillColor(sf::Color(70, 70, 78));
                 window.draw(separator);
 
@@ -663,13 +738,16 @@ int main() {
                     sf::Vector2u texSize = deleteIconTexture.getSize();
                     float scale = (texSize.x > 0) ? (menuIconSize / static_cast<float>(texSize.x)) : 1.f;
                     deleteSprite.setScale({scale, scale});
-                    deleteSprite.setColor(sf::Color(230, 90, 90));
-                    deleteSprite.setPosition({menuX + 12.f, menuTop + 42.f});
-                    window.draw(deleteSprite);
+                    deleteSprite.setPosition({menuX + sidePad, menuTop + rowH + rowPadTop});
+                    if (iconTintShaderLoaded) {
+                        iconTintShader.setUniform("source", deleteIconTexture);
+                        iconTintShader.setUniform("tintColor", sf::Glsl::Vec4(230.f / 255.f, 90.f / 255.f, 90.f / 255.f, 1.f));
+                        window.draw(deleteSprite, &iconTintShader);
+                    } else {
+                        window.draw(deleteSprite);
+                    }
                 }
-                sf::Text deleteLabel(uiFont, "Delete", 18);
-                deleteLabel.setFillColor(sf::Color(230, 90, 90));
-                deleteLabel.setPosition({menuX + 12.f + menuIconSize + 10.f, menuTop + 38.f});
+                deleteLabel.setPosition({menuX + sidePad + menuIconSize + iconTextGap, menuTop + rowH + rowPadTop - 3.f});
                 window.draw(deleteLabel);
             }
 
@@ -726,10 +804,18 @@ int main() {
                 label.setPosition({WINDOW_WIDTH / 2.f - 170.f, WINDOW_HEIGHT / 2.f - 50.f});
                 window.draw(label);
 
-                sf::Text nameText(uiFont, renameBuffer + "_", 24);
+                bool renameCursorOn = std::fmod(cursorBlinkClock.getElapsedTime().asSeconds(), 1.f) < 0.5f;
+                sf::Text nameText(uiFont, renameBuffer + (renameCursorOn ? "_" : " "), 24);
                 nameText.setFillColor(sf::Color::White);
                 nameText.setPosition({WINDOW_WIDTH / 2.f - 170.f, WINDOW_HEIGHT / 2.f - 20.f});
                 window.draw(nameText);
+
+                if (!renameNameError.empty() && renameErrorClock.getElapsedTime().asSeconds() < 3.f) {
+                    sf::Text errText(uiFont, renameNameError, 15);
+                    errText.setFillColor(sf::Color(230, 90, 90));
+                    errText.setPosition({WINDOW_WIDTH / 2.f - errText.getLocalBounds().size.x / 2.f, WINDOW_HEIGHT / 2.f + 60.f});
+                    window.draw(errText);
+                }
 
                 sf::RectangleShape okBtn({100.f, 36.f});
                 okBtn.setPosition({WINDOW_WIDTH / 2.f - 110.f, WINDOW_HEIGHT / 2.f + 20.f});
