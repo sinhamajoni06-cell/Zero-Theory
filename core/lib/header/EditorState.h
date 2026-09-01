@@ -43,6 +43,11 @@ public:
     bool canUndo() const { return !undoStack_.empty(); }
     bool canRedo() const { return !redoStack_.empty(); }
 
+    // ---- Dirty-state tracking (for "unsaved changes" prompts) ----
+    // Snapshot this after a save/load, then compare later: if it no longer
+    // matches, something has changed since the last save.
+    size_t undoDepth() const { return undoStack_.size(); }
+
     // ---- Clipboard ----
     void copySelected();
     void paste(float offsetX, float offsetY);
