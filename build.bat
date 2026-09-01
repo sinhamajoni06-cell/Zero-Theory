@@ -105,8 +105,8 @@ echo [SUCCESS] Build(s) completed successfully!
 echo Targets built: %BUILD_TARGETS%
 echo =========================================
 
-echo Copying assets and required DLLs into ZeroTheory\ ...
-if not exist "ZeroTheory\main\assets" xcopy /y /s /i /d "main\assets" "ZeroTheory\main\assets" >nul
+echo Syncing missing assets into ZeroTheory\ (existing files are left untouched)...
+robocopy "main\assets" "ZeroTheory\main\assets" /E /XC /XN /XO /NFL /NDL /NJH /NJS /NC /NS /NP >nul
 if not exist "ZeroTheory\main\assets\map" mkdir "ZeroTheory\main\assets\map"
 xcopy /y /d "C:\msys64\ucrt64\bin\*sfml*.dll" ZeroTheory\ >nul
 xcopy /y /d "C:\msys64\ucrt64\bin\libfreetype-6.dll" ZeroTheory\ >nul
