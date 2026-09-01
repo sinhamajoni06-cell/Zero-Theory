@@ -33,6 +33,8 @@
 
 #include "MapObject.h"
 #include "EditorState.h"
+#include "TileSet.h"
+#include "TileLayer.h"
 #include "zero_editor_session.h"
 
 // ----------------------------------------------------------

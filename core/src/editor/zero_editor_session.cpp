@@ -10,6 +10,8 @@
 
 #include "MapObject.h"
 #include "EditorState.h"
+#include "TileSet.h"
+#include "TileLayer.h"
 
 // ----------------------------------------------------------
 // Inspector panel: shows/edits Type, X, Y, W, H, Rotation of a
@@ -31,6 +33,20 @@ constexpr float kCanvasMarginBottom = 24.f;
 
 enum class InspectorField { None, X, Y, W, H, Rotation };
 enum class ExitPrompt { None, ConfirmHome, ConfirmSaveHome, ConfirmSaveQuit };
+enum class EditorMode { Objects, TilePaint };
+enum class ImportField { None, TileW, TileH };
+
+struct TileImportState {
+    bool open = false;
+    std::vector<std::string> images;
+    int selectedImage = -1;
+    int tileW = 32;
+    int tileH = 32;
+    ImportField editingField = ImportField::None;
+    std::string editBuffer;
+    sf::Texture previewTexture;
+    bool previewLoaded = false;
+};
 
 struct InspectorRowLayout {
     sf::FloatRect typeRow;
@@ -167,6 +183,43 @@ bool RunMapEditorSession(sf::RenderWindow& window,
     size_t savedUndoDepth = editor.undoDepth();
     auto isDirty = [&]() { return editor.undoDepth() != savedUndoDepth; };
 
+    // ---------------- Tile layer / tile set state ----------------
+    const std::string TILESET_META_PATH = "main/assets/map/" + projectName + "/tileset.meta";
+    const std::string TILE_LAYER_PATH = "main/assets/map/" + projectName + "/tiles.layer";
+    const std::string RAW_IMAGE_FOLDER = "main/assets/raw";
+
+    EditorMode editorMode = EditorMode::Objects;
+    TileSet tileSet;
+    TileLayer tileLayer;
+    int selectedTileIndex = 0;
+    TileImportState importState;
+
+    if (tileSet.loadMeta(TILESET_META_PATH)) {
+        tileLayer.load(TILE_LAYER_PATH);
+        tileLayer.rebuildVertices(tileSet);
+    }
+
+    auto openImportPanel = [&]() {
+        importState.open = true;
+        importState.images = ListImportableImages(RAW_IMAGE_FOLDER);
+        importState.selectedImage = importState.images.empty() ? -1 : 0;
+        importState.editingField = ImportField::None;
+        importState.previewLoaded = !importState.images.empty() &&
+            importState.previewTexture.loadFromFile(RAW_IMAGE_FOLDER + "/" + importState.images[0]);
+    };
+
+    auto confirmImport = [&]() {
+        if (importState.selectedImage < 0 || importState.selectedImage >= static_cast<int>(importState.images.size())) return;
+        std::string path = RAW_IMAGE_FOLDER + "/" + importState.images[importState.selectedImage];
+        if (tileSet.loadFromImage(path, importState.tileW, importState.tileH)) {
+            tileSet.saveMeta(TILESET_META_PATH);
+            tileLayer.rebuildVertices(tileSet);
+            selectedTileIndex = 0;
+            editorMode = EditorMode::TilePaint;
+            importState.open = false;
+        }
+    };
+
     ObjectType currentType = ObjectType::Block;
     bool snapEnabled = true;
     bool panningCamera = false;
@@ -241,6 +294,48 @@ bool RunMapEditorSession(sf::RenderWindow& window,
                 camera.setSize(newCanvasRect.size);
                 camera.zoom(zoomRatio); // preserve whatever zoom level the user had
                 ApplyCanvasViewport(camera, WINDOW_WIDTH, WINDOW_HEIGHT);
+            }
+
+            // ---- Sprite-sheet import panel takes priority over everything ----
+            if (importState.open) {
+                if (const auto* textEntered = event->getIf<sf::Event::TextEntered>()) {
+                    if (importState.editingField != ImportField::None) {
+                        char32_t unicode = textEntered->unicode;
+                        if (unicode == 8) {
+                            if (!importState.editBuffer.empty()) importState.editBuffer.pop_back();
+                        } else if (unicode >= '0' && unicode <= '9') {
+                            importState.editBuffer += static_cast<char>(unicode);
+                        }
+                    }
+                }
+                if (const auto* keyPressed = event->getIf<sf::Event::KeyPressed>()) {
+                    if (keyPressed->code == sf::Keyboard::Key::Escape) {
+                        if (importState.editingField != ImportField::None) importState.editingField = ImportField::None;
+                        else importState.open = false;
+                    } else if (keyPressed->code == sf::Keyboard::Key::Up && importState.editingField == ImportField::None) {
+                        if (!importState.images.empty()) {
+                            importState.selectedImage = (importState.selectedImage - 1 + static_cast<int>(importState.images.size())) % static_cast<int>(importState.images.size());
+                            importState.previewLoaded = importState.previewTexture.loadFromFile(RAW_IMAGE_FOLDER + "/" + importState.images[importState.selectedImage]);
+                        }
+                    } else if (keyPressed->code == sf::Keyboard::Key::Down && importState.editingField == ImportField::None) {
+                        if (!importState.images.empty()) {
+                            importState.selectedImage = (importState.selectedImage + 1) % static_cast<int>(importState.images.size());
+                            importState.previewLoaded = importState.previewTexture.loadFromFile(RAW_IMAGE_FOLDER + "/" + importState.images[importState.selectedImage]);
+                        }
+                    } else if (keyPressed->code == sf::Keyboard::Key::Tab) {
+                        importState.editingField = (importState.editingField == ImportField::TileW) ? ImportField::TileH : ImportField::TileW;
+                        importState.editBuffer = std::to_string(importState.editingField == ImportField::TileW ? importState.tileW : importState.tileH);
+                    } else if (keyPressed->code == sf::Keyboard::Key::Enter) {
+                        if (importState.editingField != ImportField::None) {
+                            int v = ParseNumberOr(importState.editBuffer, 32.f) > 0 ? static_cast<int>(ParseNumberOr(importState.editBuffer, 32.f)) : 32;
+                            if (importState.editingField == ImportField::TileW) importState.tileW = v; else importState.tileH = v;
+                            importState.editingField = ImportField::None;
+                        } else {
+                            confirmImport();
+                        }
+                    }
+                }
+                continue; // swallow all other input while the import panel is up
             }
 
             // ---- Exit / unsaved-changes modal takes priority over everything ----
@@ -352,6 +447,16 @@ bool RunMapEditorSession(sf::RenderWindow& window,
                     panningCamera = true;
                     lastMousePixel = mousePressed->position;
                 }
+                else if (editorMode == EditorMode::TilePaint && mousePressed->button == sf::Mouse::Button::Left) {
+                    sf::Vector2i cell = tileLayer.worldToTile(worldPos);
+                    tileLayer.set(cell.x, cell.y, selectedTileIndex);
+                    continue;
+                }
+                else if (editorMode == EditorMode::TilePaint && mousePressed->button == sf::Mouse::Button::Right) {
+                    sf::Vector2i cell = tileLayer.worldToTile(worldPos);
+                    tileLayer.set(cell.x, cell.y, TileLayer::kEmpty);
+                    continue;
+                }
                 else if (mousePressed->button == sf::Mouse::Button::Left) {
                     int hitIndex = -1;
                     const auto& objs = editor.objects();
@@ -448,6 +553,12 @@ bool RunMapEditorSession(sf::RenderWindow& window,
                 else if (keyPressed->code == sf::Keyboard::Key::Num3) currentType = ObjectType::Platform;
                 else if (keyPressed->code == sf::Keyboard::Key::Num4) currentType = ObjectType::Coin;
                 else if (keyPressed->code == sf::Keyboard::Key::G) snapEnabled = !snapEnabled;
+                else if (keyPressed->code == sf::Keyboard::Key::T) {
+                    editorMode = (editorMode == EditorMode::Objects) ? EditorMode::TilePaint : EditorMode::Objects;
+                }
+                else if (keyPressed->code == sf::Keyboard::Key::I) {
+                    openImportPanel();
+                }
                 else if (keyPressed->code == sf::Keyboard::Key::Escape) {
                     if (editor.hasSelection()) {
                         editor.clearSelection();
@@ -470,10 +581,13 @@ bool RunMapEditorSession(sf::RenderWindow& window,
                 }
                 else if (ctrlHeld && keyPressed->code == sf::Keyboard::Key::S) {
                     editor.saveToFile(SAVE_PATH);
+                    tileLayer.save(TILE_LAYER_PATH);
                     savedUndoDepth = editor.undoDepth();
                 }
                 else if (ctrlHeld && keyPressed->code == sf::Keyboard::Key::O) {
                     editor.loadFromFile(SAVE_PATH);
+                    tileLayer.load(TILE_LAYER_PATH);
+                    tileLayer.rebuildVertices(tileSet);
                     savedUndoDepth = editor.undoDepth();
                 }
                 else if (ctrlHeld && keyPressed->code == sf::Keyboard::Key::Z) {
@@ -513,6 +627,9 @@ bool RunMapEditorSession(sf::RenderWindow& window,
         }
 
         window.setView(camera); // restricted to the inset canvas viewport; content below is clipped to it
+
+        if (tileLayer.dirty) tileLayer.rebuildVertices(tileSet);
+        tileLayer.draw(window, tileSet); // background art, drawn beneath objects
 
         const auto& objs = editor.objects();
         for (int i = 0; i < static_cast<int>(objs.size()); ++i) {
