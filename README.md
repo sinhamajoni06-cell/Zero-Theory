@@ -46,6 +46,27 @@ Zero-Theory-core/
 └── README.md                          # Primary repository documentation
 ```
 ---
+
+## Build Guide:- 
+
+```
+Map_Editor_Architecture/
+├── Map_Editor_Source_Files/
+│   ├── core/src/editor/zero_map.cpp              # Entry point; initializes application window and main loop
+│   ├── core/src/editor/zero_editor_session.cpp   # Active session logic, editing tools, UI, and state management
+│   └── core/lib/cpp/*.cpp                        # Core engine implementations shared between game and editor
+├── Include_Headers/
+│   ├── core/lib/header/                          # Header declarations for core libraries
+│   ├── core/src/                                 # General project header files
+│   └── core/src/engine/                          # Engine sub-system and data structure headers
+├── External_Deps/
+│   ├── SFML (Graphics, Window, System)           # Media library handling rendering, windows, and input
+│   ├── OpenGL / GDI32 / FreeType                 # Low-level graphics rendering, Win32 GDI, and font parsing
+│   └── main/assets/map/                          # Map asset files copied into the final executable folder
+└── Outputs/
+    └── ZeroTheory/MapEditor.exe                  # Executable output generated from compiled sources and links
+```
+
 ## G++ Installation and Setup
 
 - Go to [msys2.org](https://www.msys2.org/) and Install G++. (**Recommended**: C++17)
