@@ -25,6 +25,10 @@ constexpr float kInspectorWidth = 220.f;
 constexpr float kRowHeight = 34.f;
 constexpr float kRowPad = 10.f;
 
+constexpr float kToolbarWidth = 64.f;
+constexpr float kToolbarButtonSize = 48.f;
+constexpr float kToolbarButtonPad = 8.f;
+
 // Canvas framing (the "small screen" the map is edited inside,
 // inset from the window edges like Godot's 2D viewport).
 constexpr float kCanvasMarginTop = 56.f;
@@ -34,6 +38,7 @@ constexpr float kCanvasMarginBottom = 24.f;
 enum class InspectorField { None, X, Y, W, H, Rotation };
 enum class ExitPrompt { None, ConfirmHome, ConfirmSaveHome, ConfirmSaveQuit };
 enum class EditorMode { Objects, TilePaint };
+enum class Tool { Pencil, Eraser, Fill, Move };
 enum class ImportField { None, TileW, TileH };
 
 struct TileImportState {
@@ -69,7 +74,7 @@ InspectorRowLayout ComputeInspectorLayout(unsigned int WINDOW_WIDTH) {
 // Screen-space rect of the actual editable map canvas (excludes the
 // inspector dock and the surrounding chrome margins).
 sf::FloatRect ComputeCanvasRect(unsigned int WINDOW_WIDTH, unsigned int WINDOW_HEIGHT) {
-    float left = kCanvasMarginSides;
+    float left = kCanvasMarginSides + kToolbarWidth;
     float top = kCanvasMarginTop;
     float right = static_cast<float>(WINDOW_WIDTH) - kInspectorWidth - kCanvasMarginSides;
     float bottom = static_cast<float>(WINDOW_HEIGHT) - kCanvasMarginBottom;
@@ -153,6 +158,66 @@ void DrawConfirmModal(sf::RenderWindow& window, sf::Font& uiFont,
     window.draw(hintText);
 }
 
+void FloodFillTile(TileLayer& layer, int startX, int startY, int newTile) {
+    int target = layer.get(startX, startY);
+    if (target == newTile) return;
+    std::vector<sf::Vector2i> stack{{startX, startY}};
+    while (!stack.empty()) {
+        sf::Vector2i c = stack.back(); stack.pop_back();
+        if (c.x < 0 || c.y < 0 || c.x >= layer.widthTiles() || c.y >= layer.heightTiles()) continue;
+        if (layer.get(c.x, c.y) != target) continue;
+        layer.set(c.x, c.y, newTile);
+        stack.push_back({c.x + 1, c.y});
+        stack.push_back({c.x - 1, c.y});
+        stack.push_back({c.x, c.y + 1});
+        stack.push_back({c.x, c.y - 1});
+    }
+}
+
+struct ToolbarButton {
+    Tool tool;
+    sf::FloatRect bounds;
+    std::string label;
+};
+
+std::vector<ToolbarButton> ComputeToolbarLayout(unsigned int WINDOW_HEIGHT) {
+    std::vector<ToolbarButton> buttons;
+    struct Def { Tool t; std::string label; };
+    std::vector<Def> defs = {
+        {Tool::Pencil, "P"},
+        {Tool::Eraser, "E"},
+        {Tool::Fill,   "F"},
+        {Tool::Move,   "M"},
+    };
+    float x = kCanvasMarginSides + (kToolbarWidth - kToolbarButtonSize) / 2.f;
+    float y = kCanvasMarginTop;
+    for (auto& d : defs) {
+        buttons.push_back({d.t, sf::FloatRect({x, y}, {kToolbarButtonSize, kToolbarButtonSize}), d.label});
+        y += kToolbarButtonSize + kToolbarButtonPad;
+    }
+    (void)WINDOW_HEIGHT;
+    return buttons;
+}
+
+void DrawToolbar(sf::RenderWindow& window, sf::Font& uiFont, unsigned int WINDOW_HEIGHT, Tool currentTool) {
+    for (const auto& btn : ComputeToolbarLayout(WINDOW_HEIGHT)) {
+        bool active = (btn.tool == currentTool);
+        sf::RectangleShape bg(btn.bounds.size);
+        bg.setPosition(btn.bounds.position);
+        bg.setFillColor(active ? sf::Color(90, 90, 240) : sf::Color(40, 40, 46));
+        bg.setOutlineThickness(1.f);
+        bg.setOutlineColor(sf::Color(70, 70, 80));
+        window.draw(bg);
+
+        sf::Text label(uiFont, btn.label, 18);
+        label.setFillColor(sf::Color::White);
+        sf::FloatRect lb = label.getLocalBounds();
+        label.setPosition({btn.bounds.position.x + btn.bounds.size.x / 2.f - lb.size.x / 2.f,
+                            btn.bounds.position.y + btn.bounds.size.y / 2.f - lb.size.y / 2.f - 4.f});
+        window.draw(label);
+    }
+}
+
 } // namespace
 
 bool RunMapEditorSession(sf::RenderWindow& window,
@@ -192,6 +257,7 @@ bool RunMapEditorSession(sf::RenderWindow& window,
     TileSet tileSet;
     TileLayer tileLayer;
     int selectedTileIndex = 0;
+    Tool currentTool = Tool::Pencil;
     TileImportState importState;
 
     if (tileSet.loadMeta(TILESET_META_PATH)) {
@@ -433,6 +499,19 @@ bool RunMapEditorSession(sf::RenderWindow& window,
                     continue;
                 }
 
+                // ---- Toolbar hit-test (only meaningful in Tile-Paint mode) ----
+                if (editorMode == EditorMode::TilePaint && mousePressed->button == sf::Mouse::Button::Left) {
+                    bool hitToolbar = false;
+                    for (const auto& btn : ComputeToolbarLayout(WINDOW_HEIGHT)) {
+                        if (btn.bounds.contains(screenPos)) {
+                            currentTool = btn.tool;
+                            hitToolbar = true;
+                            break;
+                        }
+                    }
+                    if (hitToolbar) continue;
+                }
+
                 // Ignore clicks outside the editable canvas (the chrome margins).
                 sf::FloatRect canvasRect = ComputeCanvasRect(WINDOW_WIDTH, WINDOW_HEIGHT);
                 if (!canvasRect.contains(screenPos)) {
@@ -447,9 +526,17 @@ bool RunMapEditorSession(sf::RenderWindow& window,
                     panningCamera = true;
                     lastMousePixel = mousePressed->position;
                 }
+                else if (editorMode == EditorMode::TilePaint && currentTool == Tool::Move &&
+                         mousePressed->button == sf::Mouse::Button::Left) {
+                    panningCamera = true;
+                    lastMousePixel = mousePressed->position;
+                    continue;
+                }
                 else if (editorMode == EditorMode::TilePaint && mousePressed->button == sf::Mouse::Button::Left) {
                     sf::Vector2i cell = tileLayer.worldToTile(worldPos);
-                    tileLayer.set(cell.x, cell.y, selectedTileIndex);
+                    if (currentTool == Tool::Pencil) tileLayer.set(cell.x, cell.y, selectedTileIndex);
+                    else if (currentTool == Tool::Eraser) tileLayer.set(cell.x, cell.y, TileLayer::kEmpty);
+                    else if (currentTool == Tool::Fill) FloodFillTile(tileLayer, cell.x, cell.y, selectedTileIndex);
                     continue;
                 }
                 else if (editorMode == EditorMode::TilePaint && mousePressed->button == sf::Mouse::Button::Right) {
@@ -528,6 +615,17 @@ bool RunMapEditorSession(sf::RenderWindow& window,
             }
 
             if (const auto* mouseMoved = event->getIf<sf::Event::MouseMoved>()) {
+                if (editorMode == EditorMode::TilePaint && currentTool != Tool::Move &&
+                    sf::Mouse::isButtonPressed(sf::Mouse::Button::Left)) {
+                    sf::FloatRect canvasRectNow = ComputeCanvasRect(WINDOW_WIDTH, WINDOW_HEIGHT);
+                    sf::Vector2f screenPosNow(static_cast<float>(mouseMoved->position.x), static_cast<float>(mouseMoved->position.y));
+                    if (canvasRectNow.contains(screenPosNow)) {
+                        sf::Vector2f worldPos = window.mapPixelToCoords(mouseMoved->position, camera);
+                        sf::Vector2i cell = tileLayer.worldToTile(worldPos);
+                        if (currentTool == Tool::Pencil) tileLayer.set(cell.x, cell.y, selectedTileIndex);
+                        else if (currentTool == Tool::Eraser) tileLayer.set(cell.x, cell.y, TileLayer::kEmpty);
+                    }
+                }
                 if (panningCamera) {
                     sf::Vector2i delta = mouseMoved->position - lastMousePixel;
                     sf::FloatRect canvasRect = ComputeCanvasRect(WINDOW_WIDTH, WINDOW_HEIGHT);
@@ -555,6 +653,18 @@ bool RunMapEditorSession(sf::RenderWindow& window,
                 else if (keyPressed->code == sf::Keyboard::Key::G) snapEnabled = !snapEnabled;
                 else if (keyPressed->code == sf::Keyboard::Key::T) {
                     editorMode = (editorMode == EditorMode::Objects) ? EditorMode::TilePaint : EditorMode::Objects;
+                }
+                else if (editorMode == EditorMode::TilePaint && keyPressed->code == sf::Keyboard::Key::P) {
+                    currentTool = Tool::Pencil;
+                }
+                else if (editorMode == EditorMode::TilePaint && keyPressed->code == sf::Keyboard::Key::E) {
+                    currentTool = Tool::Eraser;
+                }
+                else if (editorMode == EditorMode::TilePaint && keyPressed->code == sf::Keyboard::Key::F) {
+                    currentTool = Tool::Fill;
+                }
+                else if (editorMode == EditorMode::TilePaint && keyPressed->code == sf::Keyboard::Key::M) {
+                    currentTool = Tool::Move;
                 }
                 else if (keyPressed->code == sf::Keyboard::Key::I) {
                     openImportPanel();
@@ -663,6 +773,10 @@ bool RunMapEditorSession(sf::RenderWindow& window,
         canvasBorder.setOutlineThickness(2.f);
         canvasBorder.setOutlineColor(sf::Color(70, 70, 80));
         window.draw(canvasBorder);
+
+        if (editorMode == EditorMode::TilePaint) {
+            DrawToolbar(window, uiFont, WINDOW_HEIGHT, currentTool);
+        }
 
         sf::Text projectLabel(uiFont, projectName + (isDirty() ? " *" : ""), 18);
         projectLabel.setFillColor(sf::Color(200, 200, 210));
