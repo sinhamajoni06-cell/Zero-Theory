@@ -24,8 +24,15 @@ echo.
 :: ======================================================
 
 set COMPILER=g++.exe
+where %COMPILER% >nul 2>nul
+if errorlevel 1 (
+    echo [ERROR] %COMPILER% not found in PATH. Check your MSYS2 install.
+    pause
+    exit /b 1
+)
+set MSYS2_ROOT=C:\msys64
 set CXX_STD=-std=c++17
-set FLAGS=-Wall -Wextra
+set FLAGS=-Wall -Wextra -O2
 set OUTPUT=ZeroTheory\ZeroTheory.exe
 
 :: A) Main Entry Point File
@@ -35,13 +42,13 @@ set MAIN_FILE=core/src/engine/NoTEngine.cpp
 set INCLUDES=-I core/lib/header
 set INCLUDES=%INCLUDES% -I core/src
 set INCLUDES=%INCLUDES% -I core/src/engine
-set INCLUDES=%INCLUDES% -I C:/msys64/ucrt64/include
+set INCLUDES=%INCLUDES% -I %MSYS2_ROOT%/ucrt64/include
 
 :: C) Source Files (.cpp)
 set SOURCES=core/lib/cpp/*.cpp
 
 :: Library Path (-L)
-set LIBS=-L C:/msys64/ucrt64/lib -lsfml-graphics -lsfml-window -lsfml-system -lopengl32 -lwinmm -lgdi32 -lfreetype -lstdc++
+set LIBS=-L %MSYS2_ROOT%/ucrt64/lib -lsfml-graphics -lsfml-window -lsfml-system -lopengl32 -lwinmm -lgdi32 -lfreetype -lstdc++
 
 :: ======================================================
 :: 2. BUILD PROCESS
@@ -49,6 +56,11 @@ set LIBS=-L C:/msys64/ucrt64/lib -lsfml-graphics -lsfml-window -lsfml-system -lo
 
 if exist ZeroTheory goto CHECK_REBUILD
 mkdir ZeroTheory
+if errorlevel 1 (
+    echo [ERROR] Could not create ZeroTheory directory.
+    pause
+    exit /b 1
+)
 goto START_BUILD
 
 :CHECK_REBUILD
@@ -87,6 +99,7 @@ if /i "%~1"=="MAP" (
 set "LAST_TARGET_LABEL=%TARGET_LABEL%"
 
 echo.
+if exist "%OUTPUT%" del /q "%OUTPUT%"
 echo [BUILDING] Compiling %TARGET_LABEL%...
 echo Main File : %MAIN_FILE%
 echo ----------------------------------------------------
@@ -109,12 +122,13 @@ echo =========================================
 
 echo Syncing missing assets into ZeroTheory\ (existing files are left untouched)...
 robocopy "main\assets" "ZeroTheory\main\assets" /E /XC /XN /XO /NFL /NDL /NJH /NJS /NC /NS /NP >nul
+if %ERRORLEVEL% GEQ 8 echo [WARNING] Asset sync may have failed - robocopy exit code %ERRORLEVEL%
 if not exist "ZeroTheory\main\assets\map" mkdir "ZeroTheory\main\assets\map"
-xcopy /y /d "C:\msys64\ucrt64\bin\*sfml*.dll" ZeroTheory\ >nul
-xcopy /y /d "C:\msys64\ucrt64\bin\libfreetype-6.dll" ZeroTheory\ >nul
-xcopy /y /d "C:\msys64\ucrt64\bin\libgcc_s_seh-1.dll" ZeroTheory\ >nul
-xcopy /y /d "C:\msys64\ucrt64\bin\libstdc++-6.dll" ZeroTheory\ >nul
-xcopy /y /d "C:\msys64\ucrt64\bin\libwinpthread-1.dll" ZeroTheory\ >nul
+xcopy /y /d "%MSYS2_ROOT%\ucrt64\bin\*sfml*.dll" ZeroTheory\ >nul
+xcopy /y /d "%MSYS2_ROOT%\ucrt64\bin\libfreetype-6.dll" ZeroTheory\ >nul
+xcopy /y /d "%MSYS2_ROOT%\ucrt64\bin\libgcc_s_seh-1.dll" ZeroTheory\ >nul
+xcopy /y /d "%MSYS2_ROOT%\ucrt64\bin\libstdc++-6.dll" ZeroTheory\ >nul
+xcopy /y /d "%MSYS2_ROOT%\ucrt64\bin\libwinpthread-1.dll" ZeroTheory\ >nul
 
 :CHECK_LAUNCH
 echo.
