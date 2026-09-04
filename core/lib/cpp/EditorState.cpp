@@ -176,11 +176,13 @@ void EditorState::paste(float offsetX, float offsetY) {
 
 // ---------------- Persistence ----------------
 
-bool EditorState::saveToFile(const std::string& path) const {
+bool EditorState::saveToFile(const std::string& path, int mapWidthTiles, int mapHeightTiles) const {
     JsonValue root = JsonValue::Object();
     JsonValue arr = JsonValue::Array();
     for (const MapObject& obj : objects_) arr.push_back(obj.toJson());
     root["objects"] = arr;
+    root["mapWidthTiles"] = mapWidthTiles;
+    root["mapHeightTiles"] = mapHeightTiles;
 
     std::ofstream file(path);
     if (!file.is_open()) {
@@ -210,6 +212,8 @@ bool EditorState::loadFromFile(const std::string& path) {
             objects_.push_back(MapObject::fromJson(item));
         }
     }
+    lastLoadedMapWidthTiles_ = root.has("mapWidthTiles") ? root.at("mapWidthTiles").asInt() : 0;
+    lastLoadedMapHeightTiles_ = root.has("mapHeightTiles") ? root.at("mapHeightTiles").asInt() : 0;
     selection_.clear();
     undoStack_.clear();
     redoStack_.clear();
