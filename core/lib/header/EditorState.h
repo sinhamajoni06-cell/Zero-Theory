@@ -54,8 +54,15 @@ public:
     bool hasClipboard() const { return !clipboard_.empty(); }
 
     // ---- Persistence ----
-    bool saveToFile(const std::string& path) const;
+    bool saveToFile(const std::string& path, int mapWidthTiles = 0, int mapHeightTiles = 0) const;
     bool loadFromFile(const std::string& path); // clears undo history on load
+
+    // Populated by loadFromFile() from the JSON's "mapWidthTiles"/"mapHeightTiles"
+    // fields, if present (0 if the file predates this or the fields are missing).
+    // The tiles.layer file remains the source of truth for the actual grid;
+    // this is just a convenience mirror for the UI to read before tiles.layer loads.
+    int lastLoadedMapWidthTiles() const { return lastLoadedMapWidthTiles_; }
+    int lastLoadedMapHeightTiles() const { return lastLoadedMapHeightTiles_; }
 
 private:
     std::vector<MapObject> objects_;
@@ -69,6 +76,8 @@ private:
     std::vector<MapObject> clipboard_;
 
     static constexpr size_t kMaxHistory = 100;
+    int lastLoadedMapWidthTiles_ = 0;
+    int lastLoadedMapHeightTiles_ = 0;
 
     void pushUndoSnapshot(); // snapshots current objects_ onto undoStack_
 };
