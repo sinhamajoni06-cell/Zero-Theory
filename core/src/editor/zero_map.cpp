@@ -49,6 +49,7 @@ struct ProjectEntry {
 
 static std::vector<ProjectEntry> ScanProjects() {
     std::vector<ProjectEntry> found;
+    std::filesystem::create_directories("main/assets/map");
     for (const auto& entry : std::filesystem::directory_iterator("main/assets/map")) {
         if (!entry.is_directory()) continue;
         ProjectEntry p;
