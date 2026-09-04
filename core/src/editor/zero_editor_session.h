@@ -19,4 +19,7 @@ bool RunMapEditorSession(sf::RenderWindow& window,
                           const std::string& projectName,
                           unsigned int WINDOW_WIDTH,
                           unsigned int WINDOW_HEIGHT,
-                          sf::Font& uiFont);
+                          sf::Font& uiFont,
+                          int mapWidthTiles = 200,
+                          int mapHeightTiles = 120,
+                          bool isNewProject = false);

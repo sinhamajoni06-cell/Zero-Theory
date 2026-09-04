@@ -126,6 +126,25 @@ int main() {
     bool creatingProject = true;
     int selectedIndex = 0;
     bool isNewProjectCreation = false;
+    bool selectingMapSize = false;
+    int mapWidthTiles = 200;
+    int mapHeightTiles = 120;
+    int selectedSizePreset = 1; // index into kMapSizePresets, "Medium" is the default
+    bool enteringCustomSize = false;
+    std::string customSizeBuffer;
+    std::string createSizeError;
+    sf::Clock createSizeErrorClock;
+    int sizeLastClickedPreset = -1;
+    sf::Clock sizeDoubleClickClock;
+
+    struct MapSizePreset { const char* label; int w; int h; };
+    static const MapSizePreset kMapSizePresets[] = {
+        {"Small  (80 x 50)",   80,  50},
+        {"Medium (200 x 120)", 200, 120},
+        {"Large  (300 x 180)", 300, 180},
+        {"Huge   (400 x 240)", 400, 240},
+    };
+    static constexpr int kMapSizePresetCount = 4;
     int lastClickedIndex = -1;
     sf::Clock doubleClickClock;
     const float DOUBLE_CLICK_MS = 350.f;
@@ -208,7 +227,7 @@ int main() {
         "3. Save your map\n"
         "4. Load it back into the Game Engine";
 
-    while (window.isOpen() && creatingProject) {
+    while (window.isOpen() && (creatingProject || selectingMapSize)) {
         // Shadow the initial constants with the *current* window size, so every
         // layout calculation below (dividerX, card positions, list width, etc.)
         // automatically reflows to fill whatever size the window actually is.
@@ -338,13 +357,110 @@ int main() {
                             createErrorClock.restart();
                         } else {
                             isNewProjectCreation = true;
-                            creatingProject = false;
+                            enteringName = false;
+                            selectingMapSize = true;
+                            selectedSizePreset = 1;
+                            mapWidthTiles = kMapSizePresets[1].w;
+                            mapHeightTiles = kMapSizePresets[1].h;
                         }
                     }
                     else if (keyPressed->code == sf::Keyboard::Key::Escape) {
                         enteringName = false;
                         typingStarted = false;
                         projectName.clear();
+                    }
+                }
+            }
+
+            else if (selectingMapSize) {
+                if (const auto* textEntered = event->getIf<sf::Event::TextEntered>()) {
+                    if (enteringCustomSize) {
+                        char32_t unicode = textEntered->unicode;
+                        if (unicode == 8) {
+                            if (!customSizeBuffer.empty()) customSizeBuffer.pop_back();
+                        } else if (unicode >= '0' && unicode <= '9') {
+                            customSizeBuffer += static_cast<char>(unicode);
+                        } else if (unicode == 'x' || unicode == 'X') {
+                            if (!customSizeBuffer.empty() && customSizeBuffer.back() != 'x') customSizeBuffer += 'x';
+                        }
+                    }
+                }
+                if (const auto* keyPressed = event->getIf<sf::Event::KeyPressed>()) {
+                    if (keyPressed->code == sf::Keyboard::Key::Left ||
+                        keyPressed->code == sf::Keyboard::Key::Up) {
+                        enteringCustomSize = false;
+                        selectedSizePreset = (selectedSizePreset - 1 + kMapSizePresetCount) % kMapSizePresetCount;
+                    } else if (keyPressed->code == sf::Keyboard::Key::Right ||
+                               keyPressed->code == sf::Keyboard::Key::Down) {
+                        enteringCustomSize = false;
+                        selectedSizePreset = (selectedSizePreset + 1) % kMapSizePresetCount;
+                    } else if (keyPressed->code == sf::Keyboard::Key::C) {
+                        enteringCustomSize = true;
+                        customSizeBuffer.clear();
+                    } else if (keyPressed->code == sf::Keyboard::Key::Enter) {
+                        if (enteringCustomSize) {
+                            size_t xPos = customSizeBuffer.find('x');
+                            bool ok = false;
+                            int w = 0, h = 0;
+                            if (xPos != std::string::npos && xPos > 0 && xPos + 1 < customSizeBuffer.size()) {
+                                try {
+                                    w = std::stoi(customSizeBuffer.substr(0, xPos));
+                                    h = std::stoi(customSizeBuffer.substr(xPos + 1));
+                                    ok = (w >= 10 && w <= 2000 && h >= 10 && h <= 2000);
+                                } catch (...) { ok = false; }
+                            }
+                            if (!ok) {
+                                createSizeError = "[Error!] Enter a size like 250x150 (10-2000 each)";
+                                createSizeErrorClock.restart();
+                            } else {
+                                mapWidthTiles = w;
+                                mapHeightTiles = h;
+                                selectingMapSize = false;
+                                creatingProject = false;
+                            }
+                        } else {
+                            mapWidthTiles = kMapSizePresets[selectedSizePreset].w;
+                            mapHeightTiles = kMapSizePresets[selectedSizePreset].h;
+                            selectingMapSize = false;
+                            creatingProject = false;
+                        }
+                    } else if (keyPressed->code == sf::Keyboard::Key::Escape) {
+                        selectingMapSize = false;
+                        enteringCustomSize = false;
+                        enteringName = true;
+                        typingStarted = true; // keep the existing name in the box
+                    }
+                }
+                if (const auto* mousePressed = event->getIf<sf::Event::MouseButtonPressed>()) {
+                    if (mousePressed->button == sf::Mouse::Button::Left) {
+                        sf::Vector2f mousePos = window.mapPixelToCoords(mousePressed->position, homeView);
+                        float dividerX = (WINDOW_WIDTH - 60.f) + (WINDOW_WIDTH * 0.62f - (WINDOW_WIDTH - 60.f)) * howToAnim;
+                        float cardX = dividerX / 2.f - 240.f;
+                        float cardY = WINDOW_HEIGHT / 2.f - 120.f;
+                        for (int i = 0; i < kMapSizePresetCount; ++i) {
+                            sf::FloatRect optRect({cardX + 20.f, cardY + 40.f + i * 34.f}, {440.f, 28.f});
+                            if (optRect.contains(mousePos)) {
+                                enteringCustomSize = false;
+                                selectedSizePreset = i;
+
+                                bool isDoubleClick = (sizeLastClickedPreset == i &&
+                                    sizeDoubleClickClock.getElapsedTime().asMilliseconds() < DOUBLE_CLICK_MS);
+                                sizeDoubleClickClock.restart();
+                                sizeLastClickedPreset = i;
+
+                                if (isDoubleClick) {
+                                    mapWidthTiles = kMapSizePresets[i].w;
+                                    mapHeightTiles = kMapSizePresets[i].h;
+                                    selectingMapSize = false;
+                                    creatingProject = false;
+                                }
+                            }
+                        }
+                        sf::FloatRect customRect({cardX + 20.f, cardY + 40.f + kMapSizePresetCount * 34.f}, {440.f, 28.f});
+                        if (customRect.contains(mousePos)) {
+                            enteringCustomSize = true;
+                            customSizeBuffer.clear();
+                        }
                     }
                 }
             }
@@ -569,7 +685,69 @@ int main() {
                         float dividerX = (WINDOW_WIDTH - 60.f) + (WINDOW_WIDTH * 0.62f - (WINDOW_WIDTH - 60.f)) * howToAnim;
 
         if (uiFontLoaded) {
-            if (enteringName) {
+            if (selectingMapSize) {
+                float dividerX = (WINDOW_WIDTH - 60.f) + (WINDOW_WIDTH * 0.62f - (WINDOW_WIDTH - 60.f)) * howToAnim;
+                float cardX = dividerX / 2.f - 240.f;
+                float cardY = WINDOW_HEIGHT / 2.f - 120.f;
+
+                sf::RectangleShape card({480.f, 40.f + (kMapSizePresetCount + 1) * 34.f + 20.f});
+                card.setFillColor(sf::Color(38, 38, 44));
+                card.setOutlineThickness(2.f);
+                card.setOutlineColor(sf::Color(90, 90, 240));
+                card.setPosition({cardX, cardY});
+                window.draw(card);
+
+                sf::Text label(uiFont, "Map Size (tiles)", 18);
+                label.setFillColor(sf::Color(150, 150, 160));
+                label.setPosition({cardX + 20.f, cardY + 10.f});
+                window.draw(label);
+
+                for (int i = 0; i < kMapSizePresetCount; ++i) {
+                    bool selected = !enteringCustomSize && selectedSizePreset == i;
+                    sf::RectangleShape row({440.f, 28.f});
+                    row.setPosition({cardX + 20.f, cardY + 40.f + i * 34.f});
+                    row.setFillColor(selected ? sf::Color(50, 50, 90) : sf::Color(30, 30, 36));
+                    if (selected) {
+                        row.setOutlineThickness(2.f);
+                        row.setOutlineColor(sf::Color(90, 90, 240));
+                    }
+                    window.draw(row);
+
+                    sf::Text optText(uiFont, kMapSizePresets[i].label, 18);
+                    optText.setFillColor(sf::Color::White);
+                    optText.setPosition({cardX + 30.f, cardY + 44.f + i * 34.f});
+                    window.draw(optText);
+                }
+
+                bool cursorOn = std::fmod(cursorBlinkClock.getElapsedTime().asSeconds(), 1.f) < 0.5f;
+                sf::RectangleShape customRow({440.f, 28.f});
+                customRow.setPosition({cardX + 20.f, cardY + 40.f + kMapSizePresetCount * 34.f});
+                customRow.setFillColor(enteringCustomSize ? sf::Color(50, 50, 90) : sf::Color(30, 30, 36));
+                if (enteringCustomSize) {
+                    customRow.setOutlineThickness(2.f);
+                    customRow.setOutlineColor(sf::Color(90, 90, 240));
+                }
+                window.draw(customRow);
+
+                std::string customLabel = "Custom: " + (customSizeBuffer.empty() ? std::string("e.g. 250x150") : customSizeBuffer);
+                sf::Text customText(uiFont, customLabel + (enteringCustomSize && cursorOn ? "_" : ""), 18);
+                customText.setFillColor(enteringCustomSize ? sf::Color::White : sf::Color(150, 150, 160));
+                customText.setPosition({cardX + 30.f, cardY + 44.f + kMapSizePresetCount * 34.f});
+                window.draw(customText);
+
+                sf::Text hint(uiFont, "Left/Right to pick a preset, C for custom, Enter to create, Esc to go back", 15);
+                hint.setFillColor(sf::Color(130, 130, 140));
+                hint.setPosition({cardX, cardY + card.getSize().y + 16.f});
+                window.draw(hint);
+
+                if (!createSizeError.empty() && createSizeErrorClock.getElapsedTime().asSeconds() < 3.f) {
+                    sf::Text errText(uiFont, createSizeError, 15);
+                    errText.setFillColor(sf::Color(230, 90, 90));
+                    errText.setPosition({cardX, cardY + card.getSize().y + 40.f});
+                    window.draw(errText);
+                }
+            }
+            else if (enteringName) {
                 if (backIconLoaded) {
                     sf::Sprite backSprite(backIconTexture);
                     sf::Vector2u texSize = backIconTexture.getSize();
@@ -953,7 +1131,8 @@ int main() {
         projectName = finalName;
     }
 
-    RunMapEditorSession(window, projectName, window.getSize().x, window.getSize().y, uiFont);
+    RunMapEditorSession(window, projectName, window.getSize().x, window.getSize().y, uiFont,
+                         mapWidthTiles, mapHeightTiles, isNewProjectCreation);
 
     return 0;
 }

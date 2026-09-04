@@ -25,20 +25,81 @@ constexpr float kInspectorWidth = 220.f;
 constexpr float kRowHeight = 34.f;
 constexpr float kRowPad = 10.f;
 
-constexpr float kToolbarWidth = 64.f;
-constexpr float kToolbarButtonSize = 48.f;
-constexpr float kToolbarButtonPad = 8.f;
-
 // Canvas framing (the "small screen" the map is edited inside,
 // inset from the window edges like Godot's 2D viewport).
 constexpr float kCanvasMarginTop = 56.f;
 constexpr float kCanvasMarginSides = 24.f;
-constexpr float kCanvasMarginBottom = 24.f;
+constexpr float kCanvasMarginBottom = 108.f; // leaves room for the bottom tile palette
+constexpr float kResizeIconX = kCanvasMarginSides + 90.f;
+constexpr float kResizeIconY = 14.f;
+constexpr float kResizeIconSize = 20.f;
+
+sf::FloatRect ComputeResizeIconBounds() {
+    return sf::FloatRect({kResizeIconX, kResizeIconY}, {kResizeIconSize, kResizeIconSize});
+}
+
+// Draws faint grid lines across whatever part of the tile layer is currently
+// visible in `camera`, plus a bright outline around the map's actual bounds
+// (0,0 to width*tileSize, height*tileSize) so the player can see where the
+// playable area ends vs. empty space beyond it.
+void DrawTileGrid(sf::RenderWindow& window, const sf::View& camera, const TileLayer& tileLayer) {
+    float tileSize = tileLayer.tileSize();
+    if (tileSize <= 0.f) return;
+
+    float mapW = tileLayer.widthTiles() * tileSize;
+    float mapH = tileLayer.heightTiles() * tileSize;
+
+    sf::FloatRect view(camera.getCenter() - camera.getSize() / 2.f, camera.getSize());
+    float left = std::max(0.f, view.position.x);
+    float top = std::max(0.f, view.position.y);
+    float right = std::min(mapW, view.position.x + view.size.x);
+    float bottom = std::min(mapH, view.position.y + view.size.y);
+    if (right <= left || bottom <= top) return;
+
+    sf::VertexArray lines(sf::PrimitiveType::Lines);
+    sf::Color gridColor(255, 255, 255, 22);
+
+    int firstCol = static_cast<int>(std::floor(left / tileSize));
+    int lastCol  = static_cast<int>(std::ceil(right / tileSize));
+    for (int c = firstCol; c <= lastCol; ++c) {
+        float x = c * tileSize;
+        lines.append(sf::Vertex{{x, top}, gridColor});
+        lines.append(sf::Vertex{{x, bottom}, gridColor});
+    }
+
+    int firstRow = static_cast<int>(std::floor(top / tileSize));
+    int lastRow  = static_cast<int>(std::ceil(bottom / tileSize));
+    for (int r = firstRow; r <= lastRow; ++r) {
+        float y = r * tileSize;
+        lines.append(sf::Vertex{{left, y}, gridColor});
+        lines.append(sf::Vertex{{right, y}, gridColor});
+    }
+    window.draw(lines);
+
+    sf::RectangleShape bounds({mapW, mapH});
+    bounds.setPosition({0.f, 0.f});
+    bounds.setFillColor(sf::Color::Transparent);
+    bounds.setOutlineThickness(2.f);
+    bounds.setOutlineColor(sf::Color(120, 170, 255, 200));
+    window.draw(bounds);
+}
+
+struct MapSizePreset { const char* label; int w; int h; };
+const MapSizePreset kResizePresets[] = {
+    {"Small  (80 x 50)",   80,  50},
+    {"Medium (200 x 120)", 200, 120},
+    {"Large  (300 x 180)", 300, 180},
+    {"Huge   (400 x 240)", 400, 240},
+};
+constexpr int kResizePresetCount = 4;
+constexpr float kPaletteHeight = 84.f;
+constexpr float kPaletteItemSize = 48.f;
+constexpr float kPalettePad = 8.f;
 
 enum class InspectorField { None, X, Y, W, H, Rotation };
 enum class ExitPrompt { None, ConfirmHome, ConfirmSaveHome, ConfirmSaveQuit };
 enum class EditorMode { Objects, TilePaint };
-enum class Tool { Pencil, Eraser, Fill, Move };
+enum class Tool { Pointer, Pencil, Eraser, Fill, Move };
 enum class ImportField { None, TileW, TileH };
 
 struct TileImportState {
@@ -74,13 +135,21 @@ InspectorRowLayout ComputeInspectorLayout(unsigned int WINDOW_WIDTH) {
 // Screen-space rect of the actual editable map canvas (excludes the
 // inspector dock and the surrounding chrome margins).
 sf::FloatRect ComputeCanvasRect(unsigned int WINDOW_WIDTH, unsigned int WINDOW_HEIGHT) {
-    float left = kCanvasMarginSides + kToolbarWidth;
+    float left = kCanvasMarginSides;
     float top = kCanvasMarginTop;
     float right = static_cast<float>(WINDOW_WIDTH) - kInspectorWidth - kCanvasMarginSides;
     float bottom = static_cast<float>(WINDOW_HEIGHT) - kCanvasMarginBottom;
     if (right < left + 40.f) right = left + 40.f;
     if (bottom < top + 40.f) bottom = top + 40.f;
     return sf::FloatRect({left, top}, {right - left, bottom - top});
+}
+
+// Screen-space rect of the bottom tile-piece palette strip, directly under
+// the canvas and sharing its left/right extent.
+sf::FloatRect ComputePaletteRect(unsigned int WINDOW_WIDTH, unsigned int WINDOW_HEIGHT) {
+    sf::FloatRect canvas = ComputeCanvasRect(WINDOW_WIDTH, WINDOW_HEIGHT);
+    float top = canvas.position.y + canvas.size.y + 8.f;
+    return sf::FloatRect({canvas.position.x, top}, {canvas.size.x, kPaletteHeight});
 }
 
 void ApplyCanvasViewport(sf::View& camera, unsigned int WINDOW_WIDTH, unsigned int WINDOW_HEIGHT) {
@@ -180,27 +249,32 @@ struct ToolbarButton {
     std::string label;
 };
 
-std::vector<ToolbarButton> ComputeToolbarLayout(unsigned int WINDOW_HEIGHT) {
+std::vector<ToolbarButton> ComputeToolbarLayout() {
     std::vector<ToolbarButton> buttons;
     struct Def { Tool t; std::string label; };
     std::vector<Def> defs = {
+        {Tool::Pointer, "Mo"},
         {Tool::Pencil, "P"},
         {Tool::Eraser, "E"},
         {Tool::Fill,   "F"},
         {Tool::Move,   "M"},
     };
-    float x = kCanvasMarginSides + (kToolbarWidth - kToolbarButtonSize) / 2.f;
-    float y = kCanvasMarginTop;
+    float buttonSize = 32.f;
+    float pad = 6.f;
+    float x = 200.f; // Placed horizontally in top bar after project title
+    float y = 10.f;  // Aligned in top header
     for (auto& d : defs) {
-        buttons.push_back({d.t, sf::FloatRect({x, y}, {kToolbarButtonSize, kToolbarButtonSize}), d.label});
-        y += kToolbarButtonSize + kToolbarButtonPad;
+        buttons.push_back({d.t, sf::FloatRect({x, y}, {buttonSize, buttonSize}), d.label});
+        x += buttonSize + pad;
     }
-    (void)WINDOW_HEIGHT;
     return buttons;
 }
 
-void DrawToolbar(sf::RenderWindow& window, sf::Font& uiFont, unsigned int WINDOW_HEIGHT, Tool currentTool) {
-    for (const auto& btn : ComputeToolbarLayout(WINDOW_HEIGHT)) {
+void DrawToolbar(sf::RenderWindow& window, sf::Font& uiFont, Tool currentTool,
+                 const sf::Texture& texPencil, const sf::Texture& texEraser,
+                 const sf::Texture& texFill, const sf::Texture& texMove,
+                 const sf::Texture& texPointer) {
+    for (const auto& btn : ComputeToolbarLayout()) {
         bool active = (btn.tool == currentTool);
         sf::RectangleShape bg(btn.bounds.size);
         bg.setPosition(btn.bounds.position);
@@ -209,12 +283,98 @@ void DrawToolbar(sf::RenderWindow& window, sf::Font& uiFont, unsigned int WINDOW
         bg.setOutlineColor(sf::Color(70, 70, 80));
         window.draw(bg);
 
-        sf::Text label(uiFont, btn.label, 18);
-        label.setFillColor(sf::Color::White);
-        sf::FloatRect lb = label.getLocalBounds();
-        label.setPosition({btn.bounds.position.x + btn.bounds.size.x / 2.f - lb.size.x / 2.f,
-                            btn.bounds.position.y + btn.bounds.size.y / 2.f - lb.size.y / 2.f - 4.f});
-        window.draw(label);
+        const sf::Texture* tex = nullptr;
+        if (btn.tool == Tool::Pencil) tex = &texPencil;
+        else if (btn.tool == Tool::Eraser) tex = &texEraser;
+        else if (btn.tool == Tool::Fill) tex = &texFill;
+        else if (btn.tool == Tool::Move) tex = &texMove;
+        else if (btn.tool == Tool::Pointer) tex = &texPointer;
+
+        sf::Vector2u texSize = (tex && tex->getSize().x > 1 && tex->getSize().y > 1) ? tex->getSize() : sf::Vector2u(0, 0);
+        if (texSize.x > 0 && texSize.y > 0) {
+            sf::Sprite icon(*tex);
+            float targetSize = 28.f;
+            float scaleX = targetSize / static_cast<float>(texSize.x);
+            float scaleY = targetSize / static_cast<float>(texSize.y);
+            icon.setScale({scaleX, scaleY});
+            icon.setPosition({
+                btn.bounds.position.x + (btn.bounds.size.x - targetSize) / 2.f,
+                btn.bounds.position.y + (btn.bounds.size.y - targetSize) / 2.f
+            });
+            window.draw(icon);
+        } else {
+            // Fallback text if an icon fails to load
+            sf::Text label(uiFont, btn.label, 18);
+            label.setFillColor(sf::Color::White);
+            sf::FloatRect lb = label.getLocalBounds();
+            label.setPosition({btn.bounds.position.x + btn.bounds.size.x / 2.f - lb.size.x / 2.f,
+                                btn.bounds.position.y + btn.bounds.size.y / 2.f - lb.size.y / 2.f - 4.f});
+            window.draw(label);
+        }
+    }
+}
+
+struct PaletteItem {
+    int tileIndex;
+    sf::FloatRect bounds;
+};
+
+// One horizontally-scrollable row of tile thumbnails, offset by `scrollX`.
+std::vector<PaletteItem> ComputePaletteLayout(const TileSet& tileSet, const sf::FloatRect& paletteRect, float scrollX) {
+    std::vector<PaletteItem> items;
+    float x = paletteRect.position.x + kPalettePad - scrollX;
+    float y = paletteRect.position.y + (paletteRect.size.y - kPaletteItemSize) / 2.f;
+    for (int i = 0; i < tileSet.tileCount(); ++i) {
+        items.push_back({i, sf::FloatRect({x, y}, {kPaletteItemSize, kPaletteItemSize})});
+        x += kPaletteItemSize + kPalettePad;
+    }
+    return items;
+}
+
+float PaletteContentWidth(const TileSet& tileSet) {
+    if (tileSet.tileCount() <= 0) return 0.f;
+    return static_cast<float>(tileSet.tileCount()) * (kPaletteItemSize + kPalettePad) + kPalettePad;
+}
+
+void DrawPalette(sf::RenderWindow& window, sf::Font& uiFont, const TileSet& tileSet,
+                  const sf::FloatRect& paletteRect, float scrollX, int selectedTileIndex) {
+    sf::RectangleShape bg(paletteRect.size);
+    bg.setPosition(paletteRect.position);
+    bg.setFillColor(sf::Color(24, 24, 28));
+    bg.setOutlineThickness(1.f);
+    bg.setOutlineColor(sf::Color(60, 60, 68));
+    window.draw(bg);
+
+    if (!tileSet.loaded || tileSet.tileCount() <= 0) {
+        sf::Text hint(uiFont, "No tileset imported - [I] Import an image to fill this palette", 14);
+        hint.setFillColor(sf::Color(140, 140, 150));
+        hint.setPosition({paletteRect.position.x + kPalettePad, paletteRect.position.y + paletteRect.size.y / 2.f - 8.f});
+        window.draw(hint);
+        return;
+    }
+
+    for (const auto& item : ComputePaletteLayout(tileSet, paletteRect, scrollX)) {
+        if (item.bounds.position.x + item.bounds.size.x < paletteRect.position.x ||
+            item.bounds.position.x > paletteRect.position.x + paletteRect.size.x) {
+            continue; // scrolled out of view
+        }
+        bool active = (item.tileIndex == selectedTileIndex);
+
+        sf::RectangleShape slot(item.bounds.size);
+        slot.setPosition(item.bounds.position);
+        slot.setFillColor(sf::Color(40, 40, 46));
+        slot.setOutlineThickness(active ? 3.f : 1.f);
+        slot.setOutlineColor(active ? sf::Color(120, 170, 255) : sf::Color(70, 70, 80));
+        window.draw(slot);
+
+        sf::Sprite icon(tileSet.texture, tileSet.tileRect(item.tileIndex));
+        sf::FloatRect texBounds = icon.getLocalBounds();
+        float pad = 4.f;
+        float scaleX = (item.bounds.size.x - pad * 2.f) / std::max(1.f, texBounds.size.x);
+        float scaleY = (item.bounds.size.y - pad * 2.f) / std::max(1.f, texBounds.size.y);
+        icon.setScale({scaleX, scaleY});
+        icon.setPosition({item.bounds.position.x + pad, item.bounds.position.y + pad});
+        window.draw(icon);
     }
 }
 
@@ -224,7 +384,10 @@ bool RunMapEditorSession(sf::RenderWindow& window,
                           const std::string& projectNameIn,
                           unsigned int WINDOW_WIDTH,
                           unsigned int WINDOW_HEIGHT,
-                          sf::Font& uiFont) {
+                          sf::Font& uiFont,
+                          int mapWidthTiles,
+                          int mapHeightTiles,
+                          bool isNewProject) {
     const float GRID_SIZE = 40.f;
     std::string projectName = projectNameIn;
 
@@ -237,6 +400,18 @@ bool RunMapEditorSession(sf::RenderWindow& window,
     sf::View camera(sf::FloatRect({0.f, 0.f}, initialCanvasRect.size));
     ApplyCanvasViewport(camera, WINDOW_WIDTH, WINDOW_HEIGHT);
     window.setView(camera);
+
+    // ---------------- Load UI Tool Icons ----------------
+    sf::Texture texPointer, texPencil, texEraser, texFill, texMove;
+    const std::string ICON_PATH = "main/assets/images/editor/UI/icons/";
+    bool pointerLoaded = texPointer.loadFromFile(ICON_PATH + "mouse-pointer-icon.png");
+    bool pencilLoaded = texPencil.loadFromFile(ICON_PATH + "pencil-icon.png");
+    bool eraserLoaded = texEraser.loadFromFile(ICON_PATH + "eraser-icon.png");
+    bool fillLoaded   = texFill.loadFromFile(ICON_PATH + "color-fill-tool-icon.png");
+    bool moveLoaded   = texMove.loadFromFile(ICON_PATH + "move-drag-arrow-icon.png");
+
+    sf::Texture editIconTexture;
+    bool editIconLoaded = editIconTexture.loadFromFile("main/assets/images/UI/icons/edit.png");
 
     // ---------------- Editor state ----------------
     EditorState editor;
@@ -253,12 +428,34 @@ bool RunMapEditorSession(sf::RenderWindow& window,
     const std::string TILE_LAYER_PATH = "main/assets/map/" + projectName + "/tiles.layer";
     const std::string RAW_IMAGE_FOLDER = "main/assets/raw";
 
-    EditorMode editorMode = EditorMode::Objects;
+    EditorMode editorMode = EditorMode::TilePaint;
     TileSet tileSet;
-    TileLayer tileLayer;
+    TileLayer tileLayer = isNewProject ? TileLayer(mapWidthTiles, mapHeightTiles) : TileLayer();
     int selectedTileIndex = 0;
     Tool currentTool = Tool::Pencil;
     TileImportState importState;
+
+    // ---- Pointer tool: last tile clicked, shown in the details panel ----
+    int pointerTileX = -1;
+    int pointerTileY = -1;
+    bool tileDetailsOpen = false;
+
+    // ---- Bottom tile-piece palette ----
+    float paletteScrollX = 0.f;
+
+    // ---- Map resize dialog ----
+    bool resizingMap = false;
+    bool resizeConfirming = false; // true = showing the "data outside will be deleted" warning
+    int resizeSelectedPreset = 1;
+    bool resizeEnteringCustom = false;
+    std::string resizeCustomBuffer;
+    int resizePendingW = 0;
+    int resizePendingH = 0;
+    std::string resizeError;
+    sf::Clock resizeErrorClock;
+    int resizeLastClickedPreset = -1;
+    sf::Clock resizeDoubleClickClock;
+    const float DOUBLE_CLICK_MS = 350.f;
 
     if (tileSet.loadMeta(TILESET_META_PATH)) {
         tileLayer.load(TILE_LAYER_PATH);
@@ -281,6 +478,7 @@ bool RunMapEditorSession(sf::RenderWindow& window,
             tileSet.saveMeta(TILESET_META_PATH);
             tileLayer.rebuildVertices(tileSet);
             selectedTileIndex = 0;
+            paletteScrollX = 0.f;
             editorMode = EditorMode::TilePaint;
             importState.open = false;
         }
@@ -466,13 +664,31 @@ bool RunMapEditorSession(sf::RenderWindow& window,
             }
 
             if (const auto* wheel = event->getIf<sf::Event::MouseWheelScrolled>()) {
-                float zoomFactor = (wheel->delta > 0) ? 0.9f : 1.1f;
-                camera.zoom(zoomFactor);
+                sf::Vector2f wheelScreenPos(static_cast<float>(wheel->position.x), static_cast<float>(wheel->position.y));
+                sf::FloatRect paletteRect = ComputePaletteRect(WINDOW_WIDTH, WINDOW_HEIGHT);
+                if (paletteRect.contains(wheelScreenPos)) {
+                    float contentWidth = PaletteContentWidth(tileSet);
+                    float maxScroll = std::max(0.f, contentWidth - paletteRect.size.x);
+                    paletteScrollX -= wheel->delta * 40.f;
+                    paletteScrollX = std::clamp(paletteScrollX, 0.f, maxScroll);
+                } else {
+                    float zoomFactor = (wheel->delta > 0) ? 0.9f : 1.1f;
+                    camera.zoom(zoomFactor);
+                }
             }
 
             if (const auto* mousePressed = event->getIf<sf::Event::MouseButtonPressed>()) {
                 sf::Vector2f screenPos(static_cast<float>(mousePressed->position.x),
                                         static_cast<float>(mousePressed->position.y));
+
+                // ---- Top bar buttons hit-test ----
+                float importBtnX = static_cast<float>(WINDOW_WIDTH) - kInspectorWidth - 110.f - 10.f;
+                if (mousePressed->button == sf::Mouse::Button::Left) {
+                    if (sf::FloatRect({importBtnX, 10.f}, {100.f, 32.f}).contains(screenPos)) {
+                        openImportPanel();
+                        continue;
+                    }
+                }
 
                 // ---- Inspector panel hit-test takes priority over world clicks ----
                 int selIdx = singleSelectedIndex();
@@ -499,17 +715,92 @@ bool RunMapEditorSession(sf::RenderWindow& window,
                     continue;
                 }
 
-                // ---- Toolbar hit-test (only meaningful in Tile-Paint mode) ----
-                if (editorMode == EditorMode::TilePaint && mousePressed->button == sf::Mouse::Button::Left) {
+                // ---- Toolbar hit-test (Always active) ----
+                if (mousePressed->button == sf::Mouse::Button::Left) {
                     bool hitToolbar = false;
-                    for (const auto& btn : ComputeToolbarLayout(WINDOW_HEIGHT)) {
+                    for (const auto& btn : ComputeToolbarLayout()) {
                         if (btn.bounds.contains(screenPos)) {
                             currentTool = btn.tool;
+                            editorMode = EditorMode::TilePaint; // Auto-switches to tile paint mode when clicked
                             hitToolbar = true;
                             break;
                         }
                     }
                     if (hitToolbar) continue;
+                }
+
+                // ---- Resize icon hit-test ----
+                if (mousePressed->button == sf::Mouse::Button::Left && !resizingMap) {
+                    if (ComputeResizeIconBounds().contains(screenPos)) {
+                        resizingMap = true;
+                        resizeConfirming = false;
+                        resizeEnteringCustom = false;
+                        resizeCustomBuffer.clear();
+                        resizeSelectedPreset = 1;
+                        continue;
+                    }
+                }
+
+                // ---- Resize dialog is modal: swallow all clicks while open ----
+                if (resizingMap) {
+                    if (mousePressed->button == sf::Mouse::Button::Left) {
+                        float cardX = kCanvasMarginSides + 40.f;
+                        float cardY = 60.f;
+                        for (int i = 0; i < kResizePresetCount; ++i) {
+                            sf::FloatRect optRect({cardX + 20.f, cardY + 40.f + i * 34.f}, {440.f, 28.f});
+                            if (optRect.contains(screenPos)) {
+                                resizeEnteringCustom = false;
+                                resizeSelectedPreset = i;
+
+                                bool isDoubleClick = (resizeLastClickedPreset == i &&
+                                    resizeDoubleClickClock.getElapsedTime().asMilliseconds() < DOUBLE_CLICK_MS);
+                                resizeDoubleClickClock.restart();
+                                resizeLastClickedPreset = i;
+                                if (isDoubleClick) {
+                                    resizePendingW = kResizePresets[i].w;
+                                    resizePendingH = kResizePresets[i].h;
+                                    resizeConfirming = true;
+                                }
+                            }
+                        }
+                        sf::FloatRect customRect({cardX + 20.f, cardY + 40.f + kResizePresetCount * 34.f}, {440.f, 28.f});
+                        if (customRect.contains(screenPos)) {
+                            resizeEnteringCustom = true;
+                            resizeCustomBuffer.clear();
+                        }
+                        sf::FloatRect confirmRect({cardX + 20.f, cardY + 40.f + (kResizePresetCount + 2) * 34.f}, {200.f, 32.f});
+                        sf::FloatRect cancelRect({cardX + 240.f, cardY + 40.f + (kResizePresetCount + 2) * 34.f}, {200.f, 32.f});
+                        if (resizeConfirming && confirmRect.contains(screenPos)) {
+                            TileLayer resized(resizePendingW, resizePendingH, tileLayer.tileSize());
+                            int copyW = std::min(resizePendingW, tileLayer.widthTiles());
+                            int copyH = std::min(resizePendingH, tileLayer.heightTiles());
+                            for (int ty = 0; ty < copyH; ++ty)
+                                for (int tx = 0; tx < copyW; ++tx)
+                                    resized.set(tx, ty, tileLayer.get(tx, ty));
+                            tileLayer = resized;
+                            tileLayer.rebuildVertices(tileSet);
+                            tileLayer.save(TILE_LAYER_PATH);
+                            resizingMap = false;
+                            resizeConfirming = false;
+                        } else if (resizeConfirming && cancelRect.contains(screenPos)) {
+                            resizeConfirming = false;
+                        }
+                    }
+                    continue;
+                }
+
+                // ---- Bottom palette hit-test: pick which tile piece paints next ----
+                if (mousePressed->button == sf::Mouse::Button::Left) {
+                    sf::FloatRect paletteRect = ComputePaletteRect(WINDOW_WIDTH, WINDOW_HEIGHT);
+                    if (paletteRect.contains(screenPos)) {
+                        for (const auto& item : ComputePaletteLayout(tileSet, paletteRect, paletteScrollX)) {
+                            if (item.bounds.contains(screenPos)) {
+                                selectedTileIndex = item.tileIndex;
+                                break;
+                            }
+                        }
+                        continue;
+                    }
                 }
 
                 // Ignore clicks outside the editable canvas (the chrome margins).
@@ -537,9 +828,16 @@ bool RunMapEditorSession(sf::RenderWindow& window,
                     if (currentTool == Tool::Pencil) tileLayer.set(cell.x, cell.y, selectedTileIndex);
                     else if (currentTool == Tool::Eraser) tileLayer.set(cell.x, cell.y, TileLayer::kEmpty);
                     else if (currentTool == Tool::Fill) FloodFillTile(tileLayer, cell.x, cell.y, selectedTileIndex);
+                    else if (currentTool == Tool::Pointer) {
+                        pointerTileX = cell.x;
+                        pointerTileY = cell.y;
+                        tileDetailsOpen = true;
+                        editor.clearSelection();
+                    }
                     continue;
                 }
-                else if (editorMode == EditorMode::TilePaint && mousePressed->button == sf::Mouse::Button::Right) {
+                else if (editorMode == EditorMode::TilePaint && currentTool == Tool::Eraser &&
+                         mousePressed->button == sf::Mouse::Button::Right) {
                     sf::Vector2i cell = tileLayer.worldToTile(worldPos);
                     tileLayer.set(cell.x, cell.y, TileLayer::kEmpty);
                     continue;
@@ -587,6 +885,9 @@ bool RunMapEditorSession(sf::RenderWindow& window,
                     panningCamera = false;
                 }
                 if (mouseReleased->button == sf::Mouse::Button::Left) {
+                    if (currentTool == Tool::Move) {
+                        panningCamera = false;
+                    }
                     if (draggingSelection) {
                         editor.commitChange();
                         draggingSelection = false;
@@ -642,7 +943,80 @@ bool RunMapEditorSession(sf::RenderWindow& window,
                 }
             }
 
-            if (const auto* keyPressed = event->getIf<sf::Event::KeyPressed>()) {
+            if (resizingMap) {
+                if (const auto* textEntered = event->getIf<sf::Event::TextEntered>()) {
+                    if (resizeEnteringCustom && !resizeConfirming) {
+                        char32_t unicode = textEntered->unicode;
+                        if (unicode == 8) {
+                            if (!resizeCustomBuffer.empty()) resizeCustomBuffer.pop_back();
+                        } else if (unicode >= '0' && unicode <= '9') {
+                            resizeCustomBuffer += static_cast<char>(unicode);
+                        } else if (unicode == 'x' || unicode == 'X') {
+                            if (!resizeCustomBuffer.empty() && resizeCustomBuffer.back() != 'x') resizeCustomBuffer += 'x';
+                        }
+                    }
+                }
+                if (const auto* keyPressed = event->getIf<sf::Event::KeyPressed>()) {
+                    if (resizeConfirming) {
+                        if (keyPressed->code == sf::Keyboard::Key::Enter) {
+                            TileLayer resized(resizePendingW, resizePendingH, tileLayer.tileSize());
+                            int copyW = std::min(resizePendingW, tileLayer.widthTiles());
+                            int copyH = std::min(resizePendingH, tileLayer.heightTiles());
+                            for (int ty = 0; ty < copyH; ++ty)
+                                for (int tx = 0; tx < copyW; ++tx)
+                                    resized.set(tx, ty, tileLayer.get(tx, ty));
+                            tileLayer = resized;
+                            tileLayer.rebuildVertices(tileSet);
+                            tileLayer.save(TILE_LAYER_PATH);
+                            resizingMap = false;
+                            resizeConfirming = false;
+                        } else if (keyPressed->code == sf::Keyboard::Key::Escape) {
+                            resizeConfirming = false;
+                        }
+                    } else if (keyPressed->code == sf::Keyboard::Key::Left ||
+                               keyPressed->code == sf::Keyboard::Key::Up) {
+                        resizeEnteringCustom = false;
+                        resizeSelectedPreset = (resizeSelectedPreset - 1 + kResizePresetCount) % kResizePresetCount;
+                    } else if (keyPressed->code == sf::Keyboard::Key::Right ||
+                               keyPressed->code == sf::Keyboard::Key::Down) {
+                        resizeEnteringCustom = false;
+                        resizeSelectedPreset = (resizeSelectedPreset + 1) % kResizePresetCount;
+                    } else if (keyPressed->code == sf::Keyboard::Key::C) {
+                        resizeEnteringCustom = true;
+                        resizeCustomBuffer.clear();
+                    } else if (keyPressed->code == sf::Keyboard::Key::Enter) {
+                        if (resizeEnteringCustom) {
+                            size_t xPos = resizeCustomBuffer.find('x');
+                            bool ok = false;
+                            int w = 0, h = 0;
+                            if (xPos != std::string::npos && xPos > 0 && xPos + 1 < resizeCustomBuffer.size()) {
+                                try {
+                                    w = std::stoi(resizeCustomBuffer.substr(0, xPos));
+                                    h = std::stoi(resizeCustomBuffer.substr(xPos + 1));
+                                    ok = (w >= 10 && w <= 2000 && h >= 10 && h <= 2000);
+                                } catch (...) { ok = false; }
+                            }
+                            if (!ok) {
+                                resizeError = "[Error!] Enter a size like 250x150 (10-2000 each)";
+                                resizeErrorClock.restart();
+                            } else {
+                                resizePendingW = w;
+                                resizePendingH = h;
+                                resizeConfirming = true;
+                            }
+                        } else {
+                            resizePendingW = kResizePresets[resizeSelectedPreset].w;
+                            resizePendingH = kResizePresets[resizeSelectedPreset].h;
+                            resizeConfirming = true;
+                        }
+                    } else if (keyPressed->code == sf::Keyboard::Key::Escape) {
+                        resizingMap = false;
+                        resizeEnteringCustom = false;
+                        resizeConfirming = false;
+                    }
+                }
+            }
+            else if (const auto* keyPressed = event->getIf<sf::Event::KeyPressed>()) {
                 bool ctrlHeld = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl) ||
                                  sf::Keyboard::isKeyPressed(sf::Keyboard::Key::RControl);
 
@@ -665,6 +1039,9 @@ bool RunMapEditorSession(sf::RenderWindow& window,
                 }
                 else if (editorMode == EditorMode::TilePaint && keyPressed->code == sf::Keyboard::Key::M) {
                     currentTool = Tool::Move;
+                }
+                else if (editorMode == EditorMode::TilePaint && keyPressed->code == sf::Keyboard::Key::N) {
+                    currentTool = Tool::Pointer;
                 }
                 else if (keyPressed->code == sf::Keyboard::Key::I) {
                     openImportPanel();
@@ -740,6 +1117,7 @@ bool RunMapEditorSession(sf::RenderWindow& window,
 
         if (tileLayer.dirty) tileLayer.rebuildVertices(tileSet);
         tileLayer.draw(window, tileSet); // background art, drawn beneath objects
+        DrawTileGrid(window, camera, tileLayer); // faint grid + bright map-bounds outline
 
         const auto& objs = editor.objects();
         for (int i = 0; i < static_cast<int>(objs.size()); ++i) {
@@ -774,14 +1152,189 @@ bool RunMapEditorSession(sf::RenderWindow& window,
         canvasBorder.setOutlineColor(sf::Color(70, 70, 80));
         window.draw(canvasBorder);
 
-        if (editorMode == EditorMode::TilePaint) {
-            DrawToolbar(window, uiFont, WINDOW_HEIGHT, currentTool);
+        // --- Top Bar Navigation / Mode Buttons ---
+        std::string sizeLabelStr = std::to_string(tileLayer.widthTiles()) + " x " +
+                                    std::to_string(tileLayer.heightTiles()) + (isDirty() ? " *" : "");
+        sf::Text sizeLabel(uiFont, sizeLabelStr, 18);
+        sizeLabel.setFillColor(sf::Color(200, 200, 210));
+        sizeLabel.setPosition({kCanvasMarginSides, 16.f});
+        window.draw(sizeLabel);
+
+        sf::FloatRect resizeIconBounds = ComputeResizeIconBounds();
+        sf::RectangleShape resizeIconBg(resizeIconBounds.size);
+        resizeIconBg.setPosition(resizeIconBounds.position);
+        resizeIconBg.setFillColor(sf::Color(45, 45, 52));
+        resizeIconBg.setOutlineThickness(1.f);
+        resizeIconBg.setOutlineColor(sf::Color(80, 80, 90));
+        window.draw(resizeIconBg);
+        if (editIconLoaded) {
+            sf::Sprite editSprite(editIconTexture);
+            sf::Vector2u texSize = editIconTexture.getSize();
+            float scale = (texSize.x > 0) ? (14.f / static_cast<float>(texSize.x)) : 1.f;
+            editSprite.setScale({scale, scale});
+            editSprite.setPosition({resizeIconBounds.position.x + 3.f, resizeIconBounds.position.y + 3.f});
+            window.draw(editSprite);
+        } else {
+            sf::Text editFallback(uiFont, "E", 14);
+            editFallback.setFillColor(sf::Color(200, 200, 210));
+            editFallback.setPosition({resizeIconBounds.position.x + 5.f, resizeIconBounds.position.y + 1.f});
+            window.draw(editFallback);
         }
 
-        sf::Text projectLabel(uiFont, projectName + (isDirty() ? " *" : ""), 18);
-        projectLabel.setFillColor(sf::Color(200, 200, 210));
-        projectLabel.setPosition({kCanvasMarginSides, 16.f});
-        window.draw(projectLabel);
+        if (resizingMap) {
+            float cardX = kCanvasMarginSides + 40.f;
+            float cardY = 60.f;
+            float cardH = 40.f + (kResizePresetCount + (resizeConfirming ? 3 : 1)) * 34.f + 20.f;
+
+            sf::RectangleShape overlay({static_cast<float>(WINDOW_WIDTH), static_cast<float>(WINDOW_HEIGHT)});
+            overlay.setFillColor(sf::Color(0, 0, 0, 140));
+            window.draw(overlay);
+
+            sf::RectangleShape card({480.f, cardH});
+            card.setFillColor(sf::Color(38, 38, 44));
+            card.setOutlineThickness(2.f);
+            card.setOutlineColor(sf::Color(90, 90, 240));
+            card.setPosition({cardX, cardY});
+            window.draw(card);
+
+            sf::Text label(uiFont, "Resize Map (tiles)", 18);
+            label.setFillColor(sf::Color(150, 150, 160));
+            label.setPosition({cardX + 20.f, cardY + 10.f});
+            window.draw(label);
+
+            for (int i = 0; i < kResizePresetCount; ++i) {
+                bool selected = !resizeEnteringCustom && resizeSelectedPreset == i;
+                sf::RectangleShape row({440.f, 28.f});
+                row.setPosition({cardX + 20.f, cardY + 40.f + i * 34.f});
+                row.setFillColor(selected ? sf::Color(50, 50, 90) : sf::Color(30, 30, 36));
+                if (selected) {
+                    row.setOutlineThickness(2.f);
+                    row.setOutlineColor(sf::Color(90, 90, 240));
+                }
+                window.draw(row);
+
+                sf::Text optText(uiFont, kResizePresets[i].label, 18);
+                optText.setFillColor(sf::Color::White);
+                optText.setPosition({cardX + 30.f, cardY + 44.f + i * 34.f});
+                window.draw(optText);
+            }
+
+            bool cursorOn = std::fmod(cursorBlinkClock.getElapsedTime().asSeconds(), 1.f) < 0.5f;
+            sf::RectangleShape customRow({440.f, 28.f});
+            customRow.setPosition({cardX + 20.f, cardY + 40.f + kResizePresetCount * 34.f});
+            customRow.setFillColor(resizeEnteringCustom ? sf::Color(50, 50, 90) : sf::Color(30, 30, 36));
+            if (resizeEnteringCustom) {
+                customRow.setOutlineThickness(2.f);
+                customRow.setOutlineColor(sf::Color(90, 90, 240));
+            }
+            window.draw(customRow);
+
+            std::string customLabel = "Custom: " + (resizeCustomBuffer.empty() ? std::string("e.g. 250x150") : resizeCustomBuffer);
+            sf::Text customText(uiFont, customLabel + (resizeEnteringCustom && cursorOn ? "_" : ""), 18);
+            customText.setFillColor(resizeEnteringCustom ? sf::Color::White : sf::Color(150, 150, 160));
+            customText.setPosition({cardX + 30.f, cardY + 44.f + kResizePresetCount * 34.f});
+            window.draw(customText);
+
+            if (!resizeConfirming) {
+                sf::Text hint(uiFont, "Left/Right to pick a preset, C for custom, Enter to continue, Esc to cancel", 15);
+                hint.setFillColor(sf::Color(130, 130, 140));
+                hint.setPosition({cardX, cardY + cardH - 26.f});
+                window.draw(hint);
+            } else {
+                sf::Text warn(uiFont,
+                    "Warning: tiles outside " + std::to_string(resizePendingW) + " x " +
+                    std::to_string(resizePendingH) + " will be permanently deleted.", 15);
+                warn.setFillColor(sf::Color(230, 160, 90));
+                warn.setPosition({cardX + 20.f, cardY + 40.f + (kResizePresetCount + 1) * 34.f});
+                window.draw(warn);
+
+                sf::RectangleShape confirmBtn({200.f, 32.f});
+                confirmBtn.setPosition({cardX + 20.f, cardY + 40.f + (kResizePresetCount + 2) * 34.f});
+                confirmBtn.setFillColor(sf::Color(120, 50, 50));
+                confirmBtn.setOutlineThickness(1.f);
+                confirmBtn.setOutlineColor(sf::Color(200, 90, 90));
+                window.draw(confirmBtn);
+                sf::Text confirmText(uiFont, "Confirm Resize", 16);
+                confirmText.setFillColor(sf::Color::White);
+                confirmText.setPosition({cardX + 40.f, cardY + 48.f + (kResizePresetCount + 2) * 34.f});
+                window.draw(confirmText);
+
+                sf::RectangleShape cancelBtn({200.f, 32.f});
+                cancelBtn.setPosition({cardX + 240.f, cardY + 40.f + (kResizePresetCount + 2) * 34.f});
+                cancelBtn.setFillColor(sf::Color(50, 50, 60));
+                cancelBtn.setOutlineThickness(1.f);
+                cancelBtn.setOutlineColor(sf::Color(90, 90, 100));
+                window.draw(cancelBtn);
+                sf::Text cancelText(uiFont, "Cancel", 16);
+                cancelText.setFillColor(sf::Color::White);
+                cancelText.setPosition({cardX + 300.f, cardY + 48.f + (kResizePresetCount + 2) * 34.f});
+                window.draw(cancelText);
+            }
+
+            if (!resizeError.empty() && resizeErrorClock.getElapsedTime().asSeconds() < 3.f) {
+                sf::Text errText(uiFont, resizeError, 15);
+                errText.setFillColor(sf::Color(230, 90, 90));
+                errText.setPosition({cardX, cardY + cardH + 6.f});
+                window.draw(errText);
+            }
+        }
+
+        // Import Button (Aligned top-right)
+        float importBtnX = static_cast<float>(WINDOW_WIDTH) - kInspectorWidth - 110.f - 10.f;
+        sf::RectangleShape importBtn({100.f, 32.f});
+        importBtn.setPosition({importBtnX, 10.f});
+        importBtn.setFillColor(sf::Color(50, 50, 60));
+        importBtn.setOutlineThickness(1.f);
+        importBtn.setOutlineColor(sf::Color(90, 90, 100));
+        window.draw(importBtn);
+
+        sf::Text importTxt(uiFont, "[I] Import", 14);
+        importTxt.setFillColor(sf::Color::White);
+        importTxt.setPosition({importBtnX + 16.f, 16.f});
+        window.draw(importTxt);
+
+        // Draw toolbar unconditionally so it is always visible
+        DrawToolbar(window, uiFont, currentTool, texPencil, texEraser, texFill, texMove, texPointer);
+
+        // Bottom tile-piece palette (pieces from the imported tileset: Box/Circle/Triangle/etc.)
+        DrawPalette(window, uiFont, tileSet, ComputePaletteRect(WINDOW_WIDTH, WINDOW_HEIGHT), paletteScrollX, selectedTileIndex);
+
+        // --- Render Tile Import Modal ---
+        if (importState.open) {
+            sf::RectangleShape dim({static_cast<float>(WINDOW_WIDTH), static_cast<float>(WINDOW_HEIGHT)});
+            dim.setFillColor(sf::Color(0, 0, 0, 180));
+            window.draw(dim);
+
+            float boxW = 500.f, boxH = 300.f;
+            float boxX = WINDOW_WIDTH / 2.f - boxW / 2.f;
+            float boxY = WINDOW_HEIGHT / 2.f - boxH / 2.f;
+
+            sf::RectangleShape box({boxW, boxH});
+            box.setPosition({boxX, boxY});
+            box.setFillColor(sf::Color(35, 35, 42));
+            box.setOutlineThickness(2.f);
+            box.setOutlineColor(sf::Color(90, 90, 240));
+            window.draw(box);
+
+            sf::Text title(uiFont, "Import Image ([Up/Down] Select, [Enter] Confirm)", 16);
+            title.setFillColor(sf::Color::White);
+            title.setPosition({boxX + 20.f, boxY + 20.f});
+            window.draw(title);
+
+            float imgY = boxY + 60.f;
+            for (size_t i = 0; i < importState.images.size(); ++i) {
+                sf::Text imgText(uiFont, importState.images[i], 15);
+                imgText.setFillColor(static_cast<int>(i) == importState.selectedImage ? sf::Color(100, 200, 255) : sf::Color(180, 180, 190));
+                imgText.setPosition({boxX + 25.f, imgY});
+                window.draw(imgText);
+                imgY += 24.f;
+            }
+
+            sf::Text sizeText(uiFont, "Tile W: " + std::to_string(importState.tileW) + " | Tile H: " + std::to_string(importState.tileH) + " ([Tab] Edit)", 14);
+            sizeText.setFillColor(sf::Color(200, 200, 200));
+            sizeText.setPosition({boxX + 20.f, boxY + boxH - 40.f});
+            window.draw(sizeText);
+        }
 
         int selIdx = singleSelectedIndex();
         if (selIdx != -1) {
@@ -817,6 +1370,29 @@ bool RunMapEditorSession(sf::RenderWindow& window,
             DrawInspectorRow(window, uiFont, L.rotRow, "Rotation",
                               editingField == InspectorField::Rotation ? editBuffer + (cursorOn ? "_" : "") : FormatNumber(obj.rotation),
                               editingField == InspectorField::Rotation);
+        }
+        else if (tileDetailsOpen && currentTool == Tool::Pointer && pointerTileX != -1) {
+            sf::RectangleShape panelBg({kInspectorWidth, static_cast<float>(WINDOW_HEIGHT)});
+            panelBg.setPosition({static_cast<float>(WINDOW_WIDTH) - kInspectorWidth, 0.f});
+            panelBg.setFillColor(sf::Color(24, 24, 28, 235));
+            window.draw(panelBg);
+
+            sf::Text header(uiFont, "Tile Details", 18);
+            header.setFillColor(sf::Color::White);
+            header.setPosition({static_cast<float>(WINDOW_WIDTH) - kInspectorWidth + kRowPad, 8.f});
+            window.draw(header);
+
+            int tileIndex = tileLayer.get(pointerTileX, pointerTileY);
+            std::string tileValueStr = (tileIndex == TileLayer::kEmpty) ? "Empty" : std::to_string(tileIndex);
+
+            sf::FloatRect cellRow({static_cast<float>(WINDOW_WIDTH) - kInspectorWidth + kRowPad, 40.f},
+                                   {kInspectorWidth - kRowPad * 2.f, kRowHeight});
+            sf::FloatRect tileRow({static_cast<float>(WINDOW_WIDTH) - kInspectorWidth + kRowPad, 40.f + kRowHeight},
+                                   {kInspectorWidth - kRowPad * 2.f, kRowHeight});
+
+            DrawInspectorRow(window, uiFont, cellRow, "Cell",
+                              std::to_string(pointerTileX) + ", " + std::to_string(pointerTileY), false);
+            DrawInspectorRow(window, uiFont, tileRow, "Tile", tileValueStr, false);
         }
 
         if (exitPrompt == ExitPrompt::ConfirmHome) {
