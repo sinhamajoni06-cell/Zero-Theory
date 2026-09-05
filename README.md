@@ -17,6 +17,20 @@ A undesigned game.
   </tr>
 </table>
 
+## Direct `.exe`- (*`v0.2.0`*)
+
+<table>
+  <tr>
+    <td align="left"><b>Game</b>: (<a href="https://github.com/sinhamajoni06-cell/Zero-Theory/tree/main#project-folder"><code>ZeroTheory.exe</code></a>)</td>
+    <td align="right"><a href="https://github.com/sinhamajoni06-cell/Zero-Theory/releases/download/v.0.2.0/ZeroTheory.exe">Download</a></td>
+  </tr>
+  <tr>
+    <td align="left"><b>Map Engine</b>: (<a href="https://github.com/sinhamajoni06-cell/Zero-Theory/tree/main#project-folder"><code>MapEditor.exe</code></a>)</td>
+    <td align="right"><a href="https://github.com/sinhamajoni06-cell/Zero-Theory/releases/download/v.0.2.0/MapEditor.exe">Download</a></td>
+  </tr>
+</table>
+
+
 
 ## Requirements
 - **Operating System**: *Windows* `10` or `11` (Recommended).
