@@ -887,6 +887,7 @@ bool RunMapEditorSession(sf::RenderWindow& window,
                             addImportEditBuffer += static_cast<char>(unicode);
                         }
                     }
+                    continue; // swallow text input while the Add panel is up
                 }
                 if (const auto* keyPressed = event->getIf<sf::Event::KeyPressed>()) {
                     if (keyPressed->code == sf::Keyboard::Key::Escape) {
@@ -911,8 +912,10 @@ bool RunMapEditorSession(sf::RenderWindow& window,
                             }
                         }
                     }
+                    continue; // swallow key presses while the Add panel is up
                 }
-                continue; // swallow all other input while the Add panel is up
+                // any other event type (e.g. mouse clicks) falls through to the
+                // mouse-handling block below, which does the actual button hit-testing
             }
 
             // ---- Exit / unsaved-changes modal takes priority over everything ----
@@ -1070,6 +1073,13 @@ bool RunMapEditorSession(sf::RenderWindow& window,
                     if (mousePressed->button == sf::Mouse::Button::Left) {
                         float cardX = kCanvasMarginSides + 40.f;
                         float cardY = 60.f;
+                        float cardH = 40.f + (kResizePresetCount + (resizeConfirming ? 3 : 1)) * 34.f + 20.f;
+                        sf::FloatRect cardBounds({cardX, cardY}, {480.f, cardH});
+                        if (!cardBounds.contains(screenPos)) {
+                            resizingMap = false;
+                            resizeConfirming = false;
+                            continue;
+                        }
                         for (int i = 0; i < kResizePresetCount; ++i) {
                             sf::FloatRect optRect({cardX + 20.f, cardY + 40.f + i * 34.f}, {440.f, 28.f});
                             if (optRect.contains(screenPos)) {
@@ -1137,6 +1147,10 @@ bool RunMapEditorSession(sf::RenderWindow& window,
                         float boxW = 360.f, boxH = 160.f;
                         float boxX = WINDOW_WIDTH / 2.f - boxW / 2.f;
                         float boxY = WINDOW_HEIGHT / 2.f - boxH / 2.f;
+                        if (!sf::FloatRect({boxX, boxY}, {boxW, boxH}).contains(screenPos)) {
+                            addPanelStage = AddPanelStage::None;
+                            continue;
+                        }
                         sf::FloatRect createBtn({boxX + 30.f, boxY + 70.f}, {140.f, 60.f});
                         sf::FloatRect importBtn2({boxX + boxW - 170.f, boxY + 70.f}, {140.f, 60.f});
                         if (createBtn.contains(screenPos)) {
@@ -1157,6 +1171,10 @@ bool RunMapEditorSession(sf::RenderWindow& window,
                         float boxW = 360.f, boxH = 180.f;
                         float boxX = WINDOW_WIDTH / 2.f - boxW / 2.f;
                         float boxY = WINDOW_HEIGHT / 2.f - boxH / 2.f;
+                        if (!sf::FloatRect({boxX, boxY}, {boxW, boxH}).contains(screenPos)) {
+                            addPanelStage = AddPanelStage::None;
+                            continue;
+                        }
                         sf::FloatRect wRow({boxX + 30.f, boxY + 60.f}, {boxW - 60.f, 28.f});
                         sf::FloatRect hRow({boxX + 30.f, boxY + 96.f}, {boxW - 60.f, 28.f});
                         sf::FloatRect confirmBtn({boxX + 30.f, boxY + boxH - 46.f}, {140.f, 32.f});
@@ -1183,6 +1201,10 @@ bool RunMapEditorSession(sf::RenderWindow& window,
                         float boxW = 380.f, boxH = 460.f;
                         float boxX = WINDOW_WIDTH / 2.f - boxW / 2.f;
                         float boxY = WINDOW_HEIGHT / 2.f - boxH / 2.f;
+                        if (!sf::FloatRect({boxX, boxY}, {boxW, boxH}).contains(screenPos)) {
+                            addPanelStage = AddPanelStage::None;
+                            continue;
+                        }
                         float gridX = boxX + 30.f, gridY = boxY + 60.f;
                         float cellSize = 20.f;
                         static const sf::Color kSwatches[6] = {
