@@ -12,21 +12,21 @@ A undesigned game.
     <td align="left"><b>All Assets</b>: (<a href="https://github.com/sinhamajoni06-cell/Zero-Theory/blob/main/main/assets/images/temp.zip"><code>temp.zip</code></a>)</td>
     <td align="right"><a href="https://github.com/sinhamajoni06-cell/Zero-Theory/raw/refs/heads/main/main/assets/images/temp.zip">Download</a></td>
   </tr>
-  <td align="left"><b>Zero-Theory (`v0.2.0`)</b>: (<a href="https://github.com/sinhamajoni06-cell/Zero-Theory/releases#release-v0.2.0"><code>ZeroTheory.zip</code></a>)</td>
-    <td align="right"><a href="https://github.com/sinhamajoni06-cell/Zero-Theory/releases/download/v.0.2.0/ZeroTheory.zip">Download</a></td>
+  <td align="left"><b>Zero-Theory (`v0.2.1`)</b>: (<a href="https://github.com/sinhamajoni06-cell/Zero-Theory/releases#release-v0.2.1"><code>ZeroTheory.zip</code></a>)</td>
+    <td align="right"><a href="https://github.com/sinhamajoni06-cell/Zero-Theory/releases/download/v.0.2.1/ZeroTheory.zip">Download</a></td>
   </tr>
 </table>
 
-## Direct `.exe`- (*`v0.2.0`*)
+## Direct `.exe`- (*`v0.2.1`*)
 
 <table>
   <tr>
-    <td align="left"><b>Game</b>: (<a href="https://github.com/sinhamajoni06-cell/Zero-Theory/tree/main#project-folder"><code>ZeroTheory.exe</code></a>)</td>
-    <td align="right"><a href="https://github.com/sinhamajoni06-cell/Zero-Theory/releases/download/v.0.2.0/ZeroTheory.exe">Download</a></td>
+    <td align="left"><b>Game</b>: (<a href="https://github.com/sinhamajoni06-cell/Zero-Theory/tree/main#build-guide-"><code>ZeroTheory.exe</code></a>)</td>
+    <td align="right"><a href="https://github.com/sinhamajoni06-cell/Zero-Theory/releases/download/v.0.2.1/ZeroTheory.exe">Download</a></td>
   </tr>
   <tr>
-    <td align="left"><b>Map Engine</b>: (<a href="https://github.com/sinhamajoni06-cell/Zero-Theory/tree/main#project-folder"><code>MapEditor.exe</code></a>)</td>
-    <td align="right"><a href="https://github.com/sinhamajoni06-cell/Zero-Theory/releases/download/v.0.2.0/MapEditor.exe">Download</a></td>
+    <td align="left"><b>Map Engine</b>: (<a href="https://github.com/sinhamajoni06-cell/Zero-Theory/tree/main#build-guide-"><code>MapEditor.exe</code></a>)</td>
+    <td align="right"><a href="https://github.com/sinhamajoni06-cell/Zero-Theory/releases/download/v.0.2.1/MapEditor.exe">Download</a></td>
   </tr>
 </table>
 
