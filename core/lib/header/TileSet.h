@@ -12,6 +12,7 @@
 struct TileSet {
     sf::Texture texture;
     std::string imagePath;     // path the source image was loaded from
+    std::string name;          // display name / folder name; not persisted by saveMeta (the folder name IS the name)
     int tileWidth  = 32;
     int tileHeight = 32;
     int columns = 0;
