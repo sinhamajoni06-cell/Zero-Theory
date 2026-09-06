@@ -30,6 +30,8 @@
 #include <filesystem>
 #include <cmath>
 #include <algorithm>
+#include <fstream>
+#include <cctype>
 
 #include "MapObject.h"
 #include "EditorState.h"
@@ -45,7 +47,25 @@
 struct ProjectEntry {
     std::string name;
     uintmax_t sizeBytes = 0;
+    int mapWidthTiles = 0;
+    int mapHeightTiles = 0;
 };
+
+// Minimal scan for "mapWidthTiles": N and "mapHeightTiles": N in map.json,
+// without pulling in a JSON library just for two integers.
+static int ExtractJsonIntField(const std::string& text, const std::string& key) {
+    std::string needle = "\"" + key + "\"";
+    size_t pos = text.find(needle);
+    if (pos == std::string::npos) return 0;
+    pos = text.find(':', pos + needle.size());
+    if (pos == std::string::npos) return 0;
+    ++pos;
+    while (pos < text.size() && (text[pos] == ' ' || text[pos] == '\t')) ++pos;
+    size_t start = pos;
+    while (pos < text.size() && (std::isdigit(static_cast<unsigned char>(text[pos])) || text[pos] == '-')) ++pos;
+    if (pos == start) return 0;
+    try { return std::stoi(text.substr(start, pos - start)); } catch (...) { return 0; }
+}
 
 static std::vector<ProjectEntry> ScanProjects() {
     std::vector<ProjectEntry> found;
@@ -57,6 +77,12 @@ static std::vector<ProjectEntry> ScanProjects() {
         std::filesystem::path mapFile = entry.path() / "map.json";
         if (std::filesystem::exists(mapFile)) {
             p.sizeBytes = std::filesystem::file_size(mapFile);
+            std::ifstream mapFileStream(mapFile);
+            std::ostringstream mapFileContents;
+            mapFileContents << mapFileStream.rdbuf();
+            std::string mapFileText = mapFileContents.str();
+            p.mapWidthTiles = ExtractJsonIntField(mapFileText, "mapWidthTiles");
+            p.mapHeightTiles = ExtractJsonIntField(mapFileText, "mapHeightTiles");
         }
         found.push_back(p);
     }
@@ -76,6 +102,32 @@ static std::string FormatSize(uintmax_t bytes) {
     oss.precision(1);
     oss << std::fixed << (kb / 1024.0) << " MB";
     return oss.str();
+}
+
+static void ToggleFullscreen(sf::RenderWindow& window, bool& isFullscreenNow,
+                              sf::Vector2u& windowedSize, sf::Vector2i& windowedPosition) {
+    if (!isFullscreenNow) {
+        windowedSize = window.getSize();
+        windowedPosition = window.getPosition();
+        window.create(sf::VideoMode::getDesktopMode(), "Zero Theory - Map Editor",
+                       sf::Style::None, sf::State::Fullscreen);
+    } else {
+        window.create(sf::VideoMode(windowedSize), "Zero Theory - Map Editor",
+                       sf::Style::Titlebar | sf::Style::Resize | sf::Style::Close, sf::State::Windowed);
+        window.setPosition(windowedPosition);
+        window.setMinimumSize(sf::Vector2u(640, 360));
+        window.setMaximumSize(sf::Vector2u(7680, 4320));
+    }
+    window.setFramerateLimit(60);
+    isFullscreenNow = !isFullscreenNow;
+}
+
+// Deletes back to the previous word boundary (Ctrl+Backspace behavior).
+static void EraseLastWord(std::string& s) {
+    size_t i = s.size();
+    while (i > 0 && s[i - 1] == ' ') --i;
+    while (i > 0 && s[i - 1] != ' ') --i;
+    s.erase(i);
 }
 
 // Recolors an icon by ignoring its own RGB and using only its alpha
@@ -105,6 +157,11 @@ int main() {
     window.setFramerateLimit(60);
     window.setMinimumSize(sf::Vector2u(640, 360));
     window.setMaximumSize(sf::Vector2u(7680, 4320));
+
+    bool isFullscreenNow = false;
+    sf::Vector2u windowedSize = window.getSize();
+    sf::Vector2i windowedPosition = window.getPosition();
+    bool quitConfirming = false;
 
     sf::View homeView(sf::FloatRect({0.f, 0.f}, {static_cast<float>(window.getSize().x), static_cast<float>(window.getSize().y)}));
 
@@ -191,42 +248,11 @@ int main() {
     sf::Clock renameErrorClock;
 
     const std::string howToUseText =
-        "HOW TO USE\n"
+        "ABOUT\n"
         "\n"
-        "-- Getting Started --\n"
-        "Select a project from the list on the\n"
-        "left, or create a new one. Each project\n"
-        "is saved as its own map.json file.\n"
+        "Currently in development.\n"
         "\n"
-        "-- Controls --\n"
-        "Left Click       Place / Select\n"
-        "Shift + Click    Add/remove from selection\n"
-        "Drag empty area  Box-select\n"
-        "Right Click      Delete object\n"
-        "Middle Mouse     Pan camera\n"
-        "Mouse Wheel      Zoom in / out\n"
-        "1 - 4            Choose object type\n"
-        "G                Toggle grid snapping\n"
-        "R                Rotate selection\n"
-        "[  /  ]          Shrink / Grow selection\n"
-        "Delete           Remove selection\n"
-        "Ctrl + Z / Y     Undo / Redo\n"
-        "Ctrl + C / V     Copy / Paste\n"
-        "Ctrl + A         Select all\n"
-        "Ctrl + S         Save map\n"
-        "Ctrl + O         Load map\n"
-        "Escape           Deselect\n"
-        "\n"
-        "-- Tips --\n"
-        "Enable grid snapping while blocking\n"
-        "out a level, disable it for fine detail\n"
-        "placement. Save often with Ctrl+S.\n"
-        "\n"
-        "-- Workflow --\n"
-        "1. Create or open a project\n"
-        "2. Place and arrange objects\n"
-        "3. Save your map\n"
-        "4. Load it back into the Game Engine";
+        "Developed Independently my Team CSP\n";
 
     while (window.isOpen() && (creatingProject || selectingMapSize)) {
         // Shadow the initial constants with the *current* window size, so every
@@ -236,7 +262,7 @@ int main() {
         unsigned int WINDOW_HEIGHT = window.getSize().y;
         while (const auto event = window.pollEvent()) {
             if (event->is<sf::Event::Closed>()) {
-                window.close();
+                quitConfirming = true;
             }
 
             if (const auto* homeResized = event->getIf<sf::Event::Resized>()) {
@@ -245,11 +271,56 @@ int main() {
                 homeView.setCenter({newSize.x / 2.f, newSize.y / 2.f});
             }
 
+            if (const auto* globalKey = event->getIf<sf::Event::KeyPressed>()) {
+                bool altHeld = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LAlt) ||
+                               sf::Keyboard::isKeyPressed(sf::Keyboard::Key::RAlt);
+                if (globalKey->code == sf::Keyboard::Key::F11 ||
+                    (altHeld && globalKey->code == sf::Keyboard::Key::Enter)) {
+                    ToggleFullscreen(window, isFullscreenNow, windowedSize, windowedPosition);
+                    sf::Vector2f fsSize(static_cast<float>(window.getSize().x), static_cast<float>(window.getSize().y));
+                    homeView.setSize(fsSize);
+                    homeView.setCenter({fsSize.x / 2.f, fsSize.y / 2.f});
+                    continue;
+                }
+                if (quitConfirming) {
+                    if (globalKey->code == sf::Keyboard::Key::Y || globalKey->code == sf::Keyboard::Key::Enter) {
+                        window.close();
+                    } else if (globalKey->code == sf::Keyboard::Key::N || globalKey->code == sf::Keyboard::Key::Escape) {
+                        quitConfirming = false;
+                    }
+                    continue;
+                }
+                if (globalKey->code == sf::Keyboard::Key::Escape &&
+                    !enteringName && !selectingMapSize && !renamingProject &&
+                    !confirmingDelete && projectMenuIndex == -1) {
+                    quitConfirming = true;
+                    continue;
+                }
+            }
+
+            if (quitConfirming) {
+                if (const auto* quitMousePressed = event->getIf<sf::Event::MouseButtonPressed>()) {
+                    if (quitMousePressed->button == sf::Mouse::Button::Left) {
+                        sf::Vector2f qMousePos = window.mapPixelToCoords(quitMousePressed->position, homeView);
+                        sf::FloatRect quitYesBounds({WINDOW_WIDTH / 2.f - 110.f, WINDOW_HEIGHT / 2.f + 20.f}, {100.f, 36.f});
+                        sf::FloatRect quitNoBounds({WINDOW_WIDTH / 2.f + 10.f, WINDOW_HEIGHT / 2.f + 20.f}, {100.f, 36.f});
+                        if (quitYesBounds.contains(qMousePos)) {
+                            window.close();
+                        } else if (quitNoBounds.contains(qMousePos)) {
+                            quitConfirming = false;
+                        }
+                    }
+                }
+                continue;
+            }
+
             if (renamingProject) {
+                bool renameCtrlHeld = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl) ||
+                                      sf::Keyboard::isKeyPressed(sf::Keyboard::Key::RControl);
                 if (const auto* textEntered = event->getIf<sf::Event::TextEntered>()) {
                     char32_t unicode = textEntered->unicode;
                     if (unicode == 8) {
-                        if (!renameBuffer.empty()) renameBuffer.pop_back();
+                        if (!renameCtrlHeld && !renameBuffer.empty()) renameBuffer.pop_back();
                     } else if (unicode >= 32 && unicode < 127) {
                         char c = static_cast<char>(unicode);
                         bool allowed = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
@@ -263,7 +334,10 @@ int main() {
                     }
                 }
                 if (const auto* keyPressed = event->getIf<sf::Event::KeyPressed>()) {
-                    if (keyPressed->code == sf::Keyboard::Key::Escape) {
+                    if (renameCtrlHeld && keyPressed->code == sf::Keyboard::Key::Backspace) {
+                        EraseLastWord(renameBuffer);
+                    }
+                    else if (keyPressed->code == sf::Keyboard::Key::Escape) {
                         renamingProject = false;
                     }
                     else if (keyPressed->code == sf::Keyboard::Key::Enter) {
@@ -325,10 +399,12 @@ int main() {
                         }
                     }
                 }
+                bool createCtrlHeld = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl) ||
+                                      sf::Keyboard::isKeyPressed(sf::Keyboard::Key::RControl);
                 if (const auto* textEntered = event->getIf<sf::Event::TextEntered>()) {
                     char32_t unicode = textEntered->unicode;
                     if (unicode == 8) {
-                        if (!projectName.empty()) projectName.pop_back();
+                        if (!createCtrlHeld && !projectName.empty()) projectName.pop_back();
                         typingStarted = true;
                     }
                     else if (unicode >= 32 && unicode < 127) {
@@ -348,7 +424,11 @@ int main() {
                     }
                 }
                 if (const auto* keyPressed = event->getIf<sf::Event::KeyPressed>()) {
-                    if (keyPressed->code == sf::Keyboard::Key::Enter) {
+                    if (createCtrlHeld && keyPressed->code == sf::Keyboard::Key::Backspace) {
+                        EraseLastWord(projectName);
+                        typingStarted = true;
+                    }
+                    else if (keyPressed->code == sf::Keyboard::Key::Enter) {
                         if (projectName.empty()) {
                             createNameError = "[Error!] Name cannot be empty";
                             createErrorClock.restart();
@@ -469,11 +549,27 @@ int main() {
                 if (!renamingProject && !confirmingDelete) {
                     if (const auto* keyPressed = event->getIf<sf::Event::KeyPressed>()) {
                         int itemCount = static_cast<int>(projects.size()) + 1;
+                        bool navigated = false;
                         if (keyPressed->code == sf::Keyboard::Key::Up) {
                             selectedIndex = (selectedIndex - 1 + itemCount) % itemCount;
+                            navigated = true;
                         }
                         else if (keyPressed->code == sf::Keyboard::Key::Down) {
                             selectedIndex = (selectedIndex + 1) % itemCount;
+                            navigated = true;
+                        }
+                        if (navigated && selectedIndex > 0) {
+                            float rowHeight = 56.f;
+                            float viewHeight = (WINDOW_HEIGHT - 110.f - 56.f);
+                            float itemTop = (selectedIndex - 1) * rowHeight;
+                            float itemBottom = itemTop + rowHeight;
+                            if (itemTop < listScrollTarget) {
+                                listScrollTarget = itemTop;
+                            } else if (itemBottom > listScrollTarget + viewHeight) {
+                                listScrollTarget = itemBottom - viewHeight;
+                            }
+                            float maxScroll = std::max(0.f, static_cast<float>(projects.size()) * rowHeight - viewHeight);
+                            listScrollTarget = std::clamp(listScrollTarget, 0.f, maxScroll);
                         }
                         else if (keyPressed->code == sf::Keyboard::Key::Enter) {
                             if (selectedIndex == 0) {
@@ -842,6 +938,15 @@ int main() {
                     nameText.setPosition({listX + 16.f, y + 6.f});
                     window.draw(nameText);
 
+                    if (p.mapWidthTiles > 0 && p.mapHeightTiles > 0) {
+                        std::string dimsStr = "(" + std::to_string(p.mapWidthTiles) + " x " +
+                                               std::to_string(p.mapHeightTiles) + ")";
+                        sf::Text dimsText(uiFont, dimsStr, 16);
+                        dimsText.setFillColor(sf::Color(150, 150, 210));
+                        dimsText.setPosition({listX + 16.f + nameText.getLocalBounds().size.x + 12.f, y + 9.f});
+                        window.draw(dimsText);
+                    }
+
                     sf::Text sizeText(uiFont, FormatSize(p.sizeBytes), 14);
                     sizeText.setFillColor(sf::Color(150, 150, 160));
                     sizeText.setPosition({listX + 16.f, y + 30.f});
@@ -949,7 +1054,7 @@ int main() {
             }
         }
 
-        if (uiFontLoaded && (projectMenuIndex != -1 || confirmingDelete || renamingProject)) {
+        if (uiFontLoaded && (projectMenuIndex != -1 || confirmingDelete || renamingProject || quitConfirming)) {
             float dividerXNow = (WINDOW_WIDTH - 60.f) + (WINDOW_WIDTH * 0.62f - (WINDOW_WIDTH - 60.f)) * howToAnim;
             float listY = 110.f;
             float rowHeight = 56.f;
@@ -1028,6 +1133,42 @@ int main() {
                 }
                 deleteLabel.setPosition({menuX + sidePad + menuIconSize + iconTextGap, menuTop + rowH + rowPadTop - 3.f});
                 window.draw(deleteLabel);
+            }
+
+            if (quitConfirming) {
+                sf::RectangleShape overlay({static_cast<float>(WINDOW_WIDTH), static_cast<float>(WINDOW_HEIGHT)});
+                overlay.setFillColor(sf::Color(0, 0, 0, 150));
+                window.draw(overlay);
+
+                sf::RectangleShape dialog({340.f, 130.f});
+                dialog.setPosition({WINDOW_WIDTH / 2.f - 170.f, WINDOW_HEIGHT / 2.f - 60.f});
+                dialog.setFillColor(sf::Color(38, 38, 44));
+                dialog.setOutlineThickness(2.f);
+                dialog.setOutlineColor(sf::Color(230, 90, 90));
+                window.draw(dialog);
+
+                sf::Text quitQuestion(uiFont, "Are you sure?", 22);
+                quitQuestion.setPosition({WINDOW_WIDTH / 2.f - quitQuestion.getLocalBounds().size.x / 2.f, WINDOW_HEIGHT / 2.f - 40.f});
+                quitQuestion.setFillColor(sf::Color::White);
+                window.draw(quitQuestion);
+
+                sf::RectangleShape quitYesBtn({100.f, 36.f});
+                quitYesBtn.setPosition({WINDOW_WIDTH / 2.f - 110.f, WINDOW_HEIGHT / 2.f + 20.f});
+                quitYesBtn.setFillColor(sf::Color(230, 90, 90));
+                window.draw(quitYesBtn);
+                sf::Text quitYesLabel(uiFont, "Quit", 18);
+                quitYesLabel.setFillColor(sf::Color::White);
+                quitYesLabel.setPosition({WINDOW_WIDTH / 2.f - 110.f + 28.f, WINDOW_HEIGHT / 2.f + 26.f});
+                window.draw(quitYesLabel);
+
+                sf::RectangleShape quitNoBtn({100.f, 36.f});
+                quitNoBtn.setPosition({WINDOW_WIDTH / 2.f + 10.f, WINDOW_HEIGHT / 2.f + 20.f});
+                quitNoBtn.setFillColor(sf::Color(70, 70, 78));
+                window.draw(quitNoBtn);
+                sf::Text quitNoLabel(uiFont, "Cancel", 18);
+                quitNoLabel.setFillColor(sf::Color::White);
+                quitNoLabel.setPosition({WINDOW_WIDTH / 2.f + 10.f + 20.f, WINDOW_HEIGHT / 2.f + 26.f});
+                window.draw(quitNoLabel);
             }
 
             if (confirmingDelete) {
