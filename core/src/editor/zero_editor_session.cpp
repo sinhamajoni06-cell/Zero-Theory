@@ -238,7 +238,7 @@ constexpr float kPaletteItemSize = 48.f;
 constexpr float kPalettePad = 8.f;
 
 enum class InspectorField { None, X, Y, W, H, Rotation };
-enum class ExitPrompt { None, ConfirmHome, ConfirmSaveHome, ConfirmSaveQuit };
+enum class ExitPrompt { None, ConfirmHome, ConfirmSaveHome, ConfirmSaveQuit, ConfirmQuit };
 enum class EditorMode { Objects, TilePaint };
 enum class Tool { Pointer, Pencil, Eraser, Fill, Move };
 enum class ImportField { None, TileW, TileH };
@@ -575,6 +575,24 @@ void DrawPalette(sf::RenderWindow& window, sf::Font& uiFont, const TileSet& tile
 
 } // namespace
 
+static void ToggleFullscreen(sf::RenderWindow& window, bool& isFullscreenNow,
+                              sf::Vector2u& windowedSize, sf::Vector2i& windowedPosition) {
+    if (!isFullscreenNow) {
+        windowedSize = window.getSize();
+        windowedPosition = window.getPosition();
+        window.create(sf::VideoMode::getDesktopMode(), "Zero Theory - Map Editor",
+                       sf::Style::None, sf::State::Fullscreen);
+    } else {
+        window.create(sf::VideoMode(windowedSize), "Zero Theory - Map Editor",
+                       sf::Style::Titlebar | sf::Style::Resize | sf::Style::Close, sf::State::Windowed);
+        window.setPosition(windowedPosition);
+        window.setMinimumSize(sf::Vector2u(640, 360));
+        window.setMaximumSize(sf::Vector2u(7680, 4320));
+    }
+    window.setFramerateLimit(60);
+    isFullscreenNow = !isFullscreenNow;
+}
+
 bool RunMapEditorSession(sf::RenderWindow& window,
                           const std::string& projectNameIn,
                           unsigned int WINDOW_WIDTH,
@@ -595,6 +613,10 @@ bool RunMapEditorSession(sf::RenderWindow& window,
     sf::View camera(sf::FloatRect({0.f, 0.f}, initialCanvasRect.size));
     ApplyCanvasViewport(camera, WINDOW_WIDTH, WINDOW_HEIGHT);
     window.setView(camera);
+
+    bool isFullscreenNow = false;
+    sf::Vector2u windowedSize = window.getSize();
+    sf::Vector2i windowedPosition = window.getPosition();
 
     // ---------------- Load UI Tool Icons ----------------
     sf::Texture texPointer, texPencil, texEraser, texFill, texMove;
@@ -620,7 +642,8 @@ bool RunMapEditorSession(sf::RenderWindow& window,
         editor.loadFromFile(SAVE_PATH);
     }
     size_t savedUndoDepth = editor.undoDepth();
-    auto isDirty = [&]() { return editor.undoDepth() != savedUndoDepth; };
+    bool tilesDirtySinceSave = false;
+    auto isDirty = [&]() { return editor.undoDepth() != savedUndoDepth || tilesDirtySinceSave; };
 
     // ---------------- Tile layer / tile set state ----------------
     const std::string TILESET_META_PATH = "main/assets/map/" + projectName + "/tileset.meta";
@@ -813,11 +836,7 @@ bool RunMapEditorSession(sf::RenderWindow& window,
         while (const auto event = window.pollEvent()) {
             if (event->is<sf::Event::Closed>()) {
                 if (exitPrompt == ExitPrompt::None) {
-                    if (isDirty()) {
-                        exitPrompt = ExitPrompt::ConfirmSaveQuit;
-                    } else {
-                        window.close();
-                    }
+                    exitPrompt = ExitPrompt::ConfirmQuit;
                 }
                 continue;
             }
@@ -832,6 +851,24 @@ bool RunMapEditorSession(sf::RenderWindow& window,
                 camera.setSize(newCanvasRect.size);
                 camera.zoom(zoomRatio); // preserve whatever zoom level the user had
                 ApplyCanvasViewport(camera, WINDOW_WIDTH, WINDOW_HEIGHT);
+            }
+
+            // ---- Fullscreen toggle: works regardless of any modal state ----
+            if (const auto* fsKey = event->getIf<sf::Event::KeyPressed>()) {
+                bool altHeld = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LAlt) ||
+                               sf::Keyboard::isKeyPressed(sf::Keyboard::Key::RAlt);
+                if (fsKey->code == sf::Keyboard::Key::F11 ||
+                    (altHeld && fsKey->code == sf::Keyboard::Key::Enter)) {
+                    ToggleFullscreen(window, isFullscreenNow, windowedSize, windowedPosition);
+                    WINDOW_WIDTH = window.getSize().x;
+                    WINDOW_HEIGHT = window.getSize().y;
+                    sf::FloatRect fsCanvasRect = ComputeCanvasRect(WINDOW_WIDTH, WINDOW_HEIGHT);
+                    float fsZoomRatio = camera.getSize().x / std::max(1.f, fsCanvasRect.size.x);
+                    camera.setSize(fsCanvasRect.size);
+                    camera.zoom(fsZoomRatio);
+                    ApplyCanvasViewport(camera, WINDOW_WIDTH, WINDOW_HEIGHT);
+                    continue;
+                }
             }
 
             // ---- Sprite-sheet import panel takes priority over everything ----
@@ -920,12 +957,46 @@ bool RunMapEditorSession(sf::RenderWindow& window,
 
             // ---- Exit / unsaved-changes modal takes priority over everything ----
             if (exitPrompt != ExitPrompt::None) {
+                if (const auto* quitMousePressed = event->getIf<sf::Event::MouseButtonPressed>()) {
+                    if (quitMousePressed->button == sf::Mouse::Button::Left) {
+                        sf::Vector2f qMousePos(static_cast<float>(quitMousePressed->position.x),
+                                               static_cast<float>(quitMousePressed->position.y));
+                        sf::FloatRect quitYesBounds({WINDOW_WIDTH / 2.f - 110.f, WINDOW_HEIGHT / 2.f + 20.f}, {100.f, 36.f});
+                        sf::FloatRect quitNoBounds({WINDOW_WIDTH / 2.f + 10.f, WINDOW_HEIGHT / 2.f + 20.f}, {100.f, 36.f});
+                        if (exitPrompt == ExitPrompt::ConfirmQuit) {
+                            if (quitYesBounds.contains(qMousePos)) {
+                                exitPrompt = isDirty() ? ExitPrompt::ConfirmSaveQuit : ExitPrompt::None;
+                                if (exitPrompt == ExitPrompt::None) window.close();
+                            } else if (quitNoBounds.contains(qMousePos)) {
+                                exitPrompt = ExitPrompt::None;
+                            }
+                        } else if (exitPrompt == ExitPrompt::ConfirmSaveQuit) {
+                            if (quitYesBounds.contains(qMousePos)) {
+                                editor.saveToFile(SAVE_PATH, tileLayer.widthTiles(), tileLayer.heightTiles());
+                                tileLayer.save(TILE_LAYER_PATH);
+                                shapeGrid.save(SHAPE_LAYER_PATH);
+                                tilesDirtySinceSave = false;
+                                window.close();
+                            } else if (quitNoBounds.contains(qMousePos)) {
+                                window.close();
+                            }
+                        }
+                    }
+                    continue;
+                }
                 if (const auto* keyPressed = event->getIf<sf::Event::KeyPressed>()) {
                     bool yes = (keyPressed->code == sf::Keyboard::Key::Y || keyPressed->code == sf::Keyboard::Key::Enter);
                     bool no = (keyPressed->code == sf::Keyboard::Key::N);
                     bool cancel = (keyPressed->code == sf::Keyboard::Key::Escape || keyPressed->code == sf::Keyboard::Key::C);
 
-                    if (exitPrompt == ExitPrompt::ConfirmHome) {
+                    if (exitPrompt == ExitPrompt::ConfirmQuit) {
+                        if (yes) {
+                            exitPrompt = isDirty() ? ExitPrompt::ConfirmSaveQuit : ExitPrompt::None;
+                            if (exitPrompt == ExitPrompt::None) window.close();
+                        } else if (no || cancel) {
+                            exitPrompt = ExitPrompt::None;
+                        }
+                    } else if (exitPrompt == ExitPrompt::ConfirmHome) {
                         if (yes) {
                             exitPrompt = isDirty() ? ExitPrompt::ConfirmSaveHome : ExitPrompt::None;
                             if (exitPrompt == ExitPrompt::None) returnToHome = true;
@@ -937,6 +1008,7 @@ bool RunMapEditorSession(sf::RenderWindow& window,
                             editor.saveToFile(SAVE_PATH, tileLayer.widthTiles(), tileLayer.heightTiles());
                             tileLayer.save(TILE_LAYER_PATH);
                             shapeGrid.save(SHAPE_LAYER_PATH);
+                            tilesDirtySinceSave = false;
                             returnToHome = true;
                             exitPrompt = ExitPrompt::None;
                         } else if (no) {
@@ -950,6 +1022,7 @@ bool RunMapEditorSession(sf::RenderWindow& window,
                             editor.saveToFile(SAVE_PATH, tileLayer.widthTiles(), tileLayer.heightTiles());
                             tileLayer.save(TILE_LAYER_PATH);
                             shapeGrid.save(SHAPE_LAYER_PATH);
+                            tilesDirtySinceSave = false;
                             window.close();
                         } else if (no) {
                             window.close();
@@ -1471,6 +1544,7 @@ bool RunMapEditorSession(sf::RenderWindow& window,
                             tileLayer.rebuildVertices(tileSet);
                             tileLayer.save(TILE_LAYER_PATH);
                     shapeGrid.save(SHAPE_LAYER_PATH);
+                    tilesDirtySinceSave = false;
                             resizingMap = false;
                             resizeConfirming = false;
                         } else if (keyPressed->code == sf::Keyboard::Key::Escape) {
@@ -1553,7 +1627,7 @@ bool RunMapEditorSession(sf::RenderWindow& window,
                     if (editor.hasSelection()) {
                         editor.clearSelection();
                     } else {
-                        exitPrompt = ExitPrompt::ConfirmHome;
+                        exitPrompt = ExitPrompt::ConfirmQuit;
                     }
                 }
                 else if (keyPressed->code == sf::Keyboard::Key::Delete ||
@@ -1577,6 +1651,7 @@ bool RunMapEditorSession(sf::RenderWindow& window,
                     editor.saveToFile(SAVE_PATH, tileLayer.widthTiles(), tileLayer.heightTiles());
                     tileLayer.save(TILE_LAYER_PATH);
                     shapeGrid.save(SHAPE_LAYER_PATH);
+                    tilesDirtySinceSave = false;
                     savedUndoDepth = editor.undoDepth();
                 }
                 else if (ctrlHeld && keyPressed->code == sf::Keyboard::Key::O) {
@@ -1625,7 +1700,10 @@ bool RunMapEditorSession(sf::RenderWindow& window,
 
         window.setView(camera); // restricted to the inset canvas viewport; content below is clipped to it
 
-        if (tileLayer.dirty) tileLayer.rebuildVertices(tileSet);
+        if (tileLayer.dirty) {
+            tilesDirtySinceSave = true; // tile/shape paint happened; rebuildVertices() below clears the transient flag, not this one
+            tileLayer.rebuildVertices(tileSet);
+        }
         tileLayer.draw(window, tileSet); // background art, drawn beneath objects
         DrawShapeGrid(window, camera, tileLayer, shapeGrid); // placed Square/Circle/Triangle/Slope pieces
         DrawTileGrid(window, camera, tileLayer); // faint grid + bright map-bounds outline
@@ -2116,15 +2194,80 @@ bool RunMapEditorSession(sf::RenderWindow& window,
             DrawInspectorRow(window, uiFont, tileRow, "Tile", tileValueStr, false);
         }
 
-        if (exitPrompt == ExitPrompt::ConfirmHome) {
+        if (exitPrompt == ExitPrompt::ConfirmQuit) {
+            sf::RectangleShape quitOverlay({static_cast<float>(WINDOW_WIDTH), static_cast<float>(WINDOW_HEIGHT)});
+            quitOverlay.setFillColor(sf::Color(0, 0, 0, 150));
+            window.draw(quitOverlay);
+
+            sf::RectangleShape quitDialog({340.f, 130.f});
+            quitDialog.setPosition({WINDOW_WIDTH / 2.f - 170.f, WINDOW_HEIGHT / 2.f - 60.f});
+            quitDialog.setFillColor(sf::Color(38, 38, 44));
+            quitDialog.setOutlineThickness(2.f);
+            quitDialog.setOutlineColor(sf::Color(230, 90, 90));
+            window.draw(quitDialog);
+
+            sf::Text quitQuestion(uiFont, "Are you sure?", 22);
+            quitQuestion.setPosition({WINDOW_WIDTH / 2.f - quitQuestion.getLocalBounds().size.x / 2.f, WINDOW_HEIGHT / 2.f - 40.f});
+            quitQuestion.setFillColor(sf::Color::White);
+            window.draw(quitQuestion);
+
+            sf::RectangleShape quitYesBtn({100.f, 36.f});
+            quitYesBtn.setPosition({WINDOW_WIDTH / 2.f - 110.f, WINDOW_HEIGHT / 2.f + 20.f});
+            quitYesBtn.setFillColor(sf::Color(230, 90, 90));
+            window.draw(quitYesBtn);
+            sf::Text quitYesLabel(uiFont, "Quit", 18);
+            quitYesLabel.setFillColor(sf::Color::White);
+            quitYesLabel.setPosition({WINDOW_WIDTH / 2.f - 110.f + 28.f, WINDOW_HEIGHT / 2.f + 26.f});
+            window.draw(quitYesLabel);
+
+            sf::RectangleShape quitNoBtn({100.f, 36.f});
+            quitNoBtn.setPosition({WINDOW_WIDTH / 2.f + 10.f, WINDOW_HEIGHT / 2.f + 20.f});
+            quitNoBtn.setFillColor(sf::Color(70, 70, 78));
+            window.draw(quitNoBtn);
+            sf::Text quitNoLabel(uiFont, "Cancel", 18);
+            quitNoLabel.setFillColor(sf::Color::White);
+            quitNoLabel.setPosition({WINDOW_WIDTH / 2.f + 10.f + 20.f, WINDOW_HEIGHT / 2.f + 26.f});
+            window.draw(quitNoLabel);
+        } else if (exitPrompt == ExitPrompt::ConfirmHome) {
             DrawConfirmModal(window, uiFont, WINDOW_WIDTH, WINDOW_HEIGHT,
                               "Return to Home page?", "Are you sure? [Y]es  /  [N]o");
         } else if (exitPrompt == ExitPrompt::ConfirmSaveHome) {
             DrawConfirmModal(window, uiFont, WINDOW_WIDTH, WINDOW_HEIGHT,
                               "You have unsaved changes!", "Save before leaving?  [Y]es  /  [N]o  /  [Esc] Cancel");
         } else if (exitPrompt == ExitPrompt::ConfirmSaveQuit) {
-            DrawConfirmModal(window, uiFont, WINDOW_WIDTH, WINDOW_HEIGHT,
-                              "You have unsaved changes!", "Save before closing?  [Y]es  /  [N]o  /  [Esc] Cancel");
+            sf::RectangleShape saveOverlay({static_cast<float>(WINDOW_WIDTH), static_cast<float>(WINDOW_HEIGHT)});
+            saveOverlay.setFillColor(sf::Color(0, 0, 0, 150));
+            window.draw(saveOverlay);
+
+            sf::RectangleShape saveDialog({340.f, 130.f});
+            saveDialog.setPosition({WINDOW_WIDTH / 2.f - 170.f, WINDOW_HEIGHT / 2.f - 60.f});
+            saveDialog.setFillColor(sf::Color(38, 38, 44));
+            saveDialog.setOutlineThickness(2.f);
+            saveDialog.setOutlineColor(sf::Color(230, 90, 90));
+            window.draw(saveDialog);
+
+            sf::Text saveQuestion(uiFont, "Save last change?", 22);
+            saveQuestion.setPosition({WINDOW_WIDTH / 2.f - saveQuestion.getLocalBounds().size.x / 2.f, WINDOW_HEIGHT / 2.f - 40.f});
+            saveQuestion.setFillColor(sf::Color::White);
+            window.draw(saveQuestion);
+
+            sf::RectangleShape saveYesBtn({100.f, 36.f});
+            saveYesBtn.setPosition({WINDOW_WIDTH / 2.f - 110.f, WINDOW_HEIGHT / 2.f + 20.f});
+            saveYesBtn.setFillColor(sf::Color(90, 160, 90));
+            window.draw(saveYesBtn);
+            sf::Text saveYesLabel(uiFont, "Yes", 18);
+            saveYesLabel.setFillColor(sf::Color::White);
+            saveYesLabel.setPosition({WINDOW_WIDTH / 2.f - 110.f + 34.f, WINDOW_HEIGHT / 2.f + 26.f});
+            window.draw(saveYesLabel);
+
+            sf::RectangleShape saveNoBtn({100.f, 36.f});
+            saveNoBtn.setPosition({WINDOW_WIDTH / 2.f + 10.f, WINDOW_HEIGHT / 2.f + 20.f});
+            saveNoBtn.setFillColor(sf::Color(70, 70, 78));
+            window.draw(saveNoBtn);
+            sf::Text saveNoLabel(uiFont, "No", 18);
+            saveNoLabel.setFillColor(sf::Color::White);
+            saveNoLabel.setPosition({WINDOW_WIDTH / 2.f + 10.f + 38.f, WINDOW_HEIGHT / 2.f + 26.f});
+            window.draw(saveNoLabel);
         }
 
         window.display();
