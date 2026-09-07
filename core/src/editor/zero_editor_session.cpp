@@ -1390,8 +1390,13 @@ bool RunMapEditorSession(sf::RenderWindow& window,
                     paletteScrollX -= wheel->delta * 40.f;
                     paletteScrollX = std::clamp(paletteScrollX, 0.f, maxScroll);
                 } else {
+                    sf::Vector2f beforeCoord = window.mapPixelToCoords(
+                        sf::Vector2i(static_cast<int>(wheelScreenPos.x), static_cast<int>(wheelScreenPos.y)), camera);
                     float zoomFactor = (wheel->delta > 0) ? 0.9f : 1.1f;
                     camera.zoom(zoomFactor);
+                    sf::Vector2f afterCoord = window.mapPixelToCoords(
+                        sf::Vector2i(static_cast<int>(wheelScreenPos.x), static_cast<int>(wheelScreenPos.y)), camera);
+                    camera.move(beforeCoord - afterCoord);
                 }
             }
 
