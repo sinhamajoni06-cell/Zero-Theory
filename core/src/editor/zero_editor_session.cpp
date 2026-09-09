@@ -241,21 +241,9 @@ enum class InspectorField { None, X, Y, W, H, Rotation };
 enum class ExitPrompt { None, ConfirmHome, ConfirmSaveHome, ConfirmSaveQuit, ConfirmQuit };
 enum class EditorMode { Objects, TilePaint };
 enum class Tool { Pointer, Pencil, Eraser, Fill, Move };
-enum class ImportField { None, TileW, TileH };
+#include "Import.h"
 
-struct TileImportState {
-    bool open = false;
-    std::vector<std::string> images;
-    int selectedImage = -1;
-    int tileW = 32;
-    int tileH = 32;
-    ImportField editingField = ImportField::None;
-    std::string editBuffer;
-    sf::Texture previewTexture;
-    bool previewLoaded = false;
-};
-
-enum class AddPanelStage { None, ChooseAction, Create, ImportSize };
+enum class AddPanelStage { None, ChooseAction, Create, ImportSize, CustomCut };
 
 struct InspectorRowLayout {
     sf::FloatRect typeRow;
@@ -295,12 +283,12 @@ sf::FloatRect ComputePaletteRect(unsigned int WINDOW_WIDTH, unsigned int WINDOW_
     return sf::FloatRect({canvas.position.x, top}, {canvas.size.x, kPaletteHeight});
 }
 
-// "Add" button, pinned to the right edge of the palette bar.
+// "Add" button, pinned to the top-right corner of the window.
 sf::FloatRect ComputeAddButtonBounds(unsigned int WINDOW_WIDTH, unsigned int WINDOW_HEIGHT) {
-    sf::FloatRect paletteRect = ComputePaletteRect(WINDOW_WIDTH, WINDOW_HEIGHT);
-    float size = kPaletteItemSize;
-    float x = paletteRect.position.x + paletteRect.size.x - size - kPalettePad;
-    float y = paletteRect.position.y + (paletteRect.size.y - size) / 2.f;
+    (void)WINDOW_HEIGHT;
+    float size = 32.f;
+    float x = static_cast<float>(WINDOW_WIDTH) - size - kRowPad;
+    float y = kRowPad;
     return sf::FloatRect({x, y}, {size, size});
 }
 
@@ -396,15 +384,37 @@ void DrawConfirmModal(sf::RenderWindow& window, sf::Font& uiFont,
     window.draw(hintText);
 }
 
-void FloodFillTile(TileLayer& layer, int startX, int startY, int newTile) {
-    int target = layer.get(startX, startY);
-    if (target == newTile) return;
+void FloodFillTile(TileLayer& layer, ShapeGrid& shapes, int startX, int startY, int newTilesetIndex, int newTileIndex) {
+    TileCell target = layer.get(startX, startY);
+    int targetShape = shapes.get(startX, startY);
+    if (target.tilesetIndex == newTilesetIndex && target.tileIndex == newTileIndex && targetShape == -1) return;
+    // Only flood through cells that match both the starting tile AND have no shape on them —
+    // a placed shape acts as a wall that blocks the fill, so it stays enclosed.
+    if (targetShape != -1) return;
     std::vector<sf::Vector2i> stack{{startX, startY}};
     while (!stack.empty()) {
         sf::Vector2i c = stack.back(); stack.pop_back();
         if (c.x < 0 || c.y < 0 || c.x >= layer.widthTiles() || c.y >= layer.heightTiles()) continue;
-        if (layer.get(c.x, c.y) != target) continue;
-        layer.set(c.x, c.y, newTile);
+        TileCell current = layer.get(c.x, c.y);
+        if (current.tilesetIndex != target.tilesetIndex || current.tileIndex != target.tileIndex) continue;
+        if (shapes.get(c.x, c.y) != -1) continue; // a shape here blocks the fill
+        layer.set(c.x, c.y, newTilesetIndex, newTileIndex);
+        stack.push_back({c.x + 1, c.y});
+        stack.push_back({c.x - 1, c.y});
+        stack.push_back({c.x, c.y + 1});
+        stack.push_back({c.x, c.y - 1});
+    }
+}
+
+void FloodFillShape(ShapeGrid& shapes, TileLayer& layer, int startX, int startY, int newShapeId) {
+    int targetShape = shapes.get(startX, startY);
+    if (targetShape == newShapeId) return;
+    std::vector<sf::Vector2i> stack{{startX, startY}};
+    while (!stack.empty()) {
+        sf::Vector2i c = stack.back(); stack.pop_back();
+        if (c.x < 0 || c.y < 0 || c.x >= layer.widthTiles() || c.y >= layer.heightTiles()) continue;
+        if (shapes.get(c.x, c.y) != targetShape) continue;
+        shapes.set(c.x, c.y, newShapeId);
         stack.push_back({c.x + 1, c.y});
         stack.push_back({c.x - 1, c.y});
         stack.push_back({c.x, c.y + 1});
@@ -488,11 +498,35 @@ struct PaletteItem {
     sf::FloatRect bounds;
 };
 
+constexpr float kPaletteTabBarHeight = 20.f;
+constexpr float kPaletteTabWidth = 90.f;
+constexpr int kShapesTabId = -2; // the built-in Square/Circle/Triangle/Slope "tileset", always present
+constexpr int kAddTabId = -1;    // the trailing "+" tab
+
+// The built-in Shapes tab, then one tab per imported tileset, then a "+" tab.
+struct PaletteTab {
+    int tilesetIndex;
+    sf::FloatRect bounds;
+};
+
+std::vector<PaletteTab> ComputePaletteTabLayout(const std::vector<TileSet>& tilesets, const sf::FloatRect& paletteRect) {
+    std::vector<PaletteTab> tabs;
+    float x = paletteRect.position.x;
+    tabs.push_back({kShapesTabId, sf::FloatRect({x, paletteRect.position.y}, {kPaletteTabWidth, kPaletteTabBarHeight})});
+    x += kPaletteTabWidth;
+    for (size_t i = 0; i < tilesets.size(); ++i) {
+        tabs.push_back({static_cast<int>(i), sf::FloatRect({x, paletteRect.position.y}, {kPaletteTabWidth, kPaletteTabBarHeight})});
+        x += kPaletteTabWidth;
+    }
+    tabs.push_back({kAddTabId, sf::FloatRect({x, paletteRect.position.y}, {kPaletteTabBarHeight, kPaletteTabBarHeight})});
+    return tabs;
+}
+
 // One horizontally-scrollable row of tile thumbnails, offset by `scrollX`.
 std::vector<PaletteItem> ComputePaletteLayout(const TileSet& tileSet, const sf::FloatRect& paletteRect, float scrollX) {
     std::vector<PaletteItem> items;
     float x = paletteRect.position.x + kPalettePad - scrollX;
-    float y = paletteRect.position.y + (paletteRect.size.y - kPaletteItemSize) / 2.f;
+    float y = paletteRect.position.y + kPaletteTabBarHeight + (paletteRect.size.y - kPaletteTabBarHeight - kPaletteItemSize) / 2.f;
     for (int i = 0; i < tileSet.tileCount(); ++i) {
         items.push_back({i, sf::FloatRect({x, y}, {kPaletteItemSize, kPaletteItemSize})});
         x += kPaletteItemSize + kPalettePad;
@@ -505,9 +539,9 @@ float PaletteContentWidth(const TileSet& tileSet) {
     return static_cast<float>(tileSet.tileCount()) * (kPaletteItemSize + kPalettePad) + kPalettePad;
 }
 
-void DrawPalette(sf::RenderWindow& window, sf::Font& uiFont, const TileSet& tileSet,
-                  const sf::FloatRect& paletteRect, float scrollX, int selectedTileIndex, int selectedShapeId,
-                  Tool currentTool) {
+void DrawPalette(sf::RenderWindow& window, sf::Font& uiFont, const std::vector<TileSet>& tilesets, int activeTab,
+                  const sf::FloatRect& paletteRect, float scrollX, int selectedTilesetIndex, int selectedTileIndex,
+                  int selectedShapeId, Tool currentTool) {
     sf::RectangleShape bg(paletteRect.size);
     bg.setPosition(paletteRect.position);
     bg.setFillColor(sf::Color(24, 24, 28));
@@ -515,17 +549,32 @@ void DrawPalette(sf::RenderWindow& window, sf::Font& uiFont, const TileSet& tile
     bg.setOutlineColor(sf::Color(60, 60, 68));
     window.draw(bg);
 
-    if (!tileSet.loaded || tileSet.tileCount() <= 0) {
-        sf::Text hint(uiFont, "No tileset imported - pick a basic shape below, or [I] Import an image", 13);
-        hint.setFillColor(sf::Color(140, 140, 150));
-        hint.setPosition({paletteRect.position.x + kPalettePad, paletteRect.position.y + 6.f});
-        window.draw(hint);
+    for (const auto& tab : ComputePaletteTabLayout(tilesets, paletteRect)) {
+        bool tabActive = (tab.tilesetIndex == activeTab);
+        sf::RectangleShape tabBg(tab.bounds.size);
+        tabBg.setPosition(tab.bounds.position);
+        tabBg.setFillColor(tabActive ? sf::Color(50, 50, 60) : sf::Color(30, 30, 34));
+        tabBg.setOutlineThickness(1.f);
+        tabBg.setOutlineColor(sf::Color(60, 60, 68));
+        window.draw(tabBg);
 
+        std::string label = (tab.tilesetIndex == kAddTabId) ? "+"
+            : (tab.tilesetIndex == kShapesTabId) ? "Shapes"
+            : (tab.tilesetIndex < static_cast<int>(tilesets.size()) ? tilesets[tab.tilesetIndex].name : "?");
+        sf::Text tabText(uiFont, label, 12);
+        tabText.setFillColor(tabActive ? sf::Color::White : sf::Color(150, 150, 160));
+        sf::FloatRect tb = tabText.getLocalBounds();
+        tabText.setPosition({tab.bounds.position.x + tab.bounds.size.x / 2.f - tb.size.x / 2.f,
+                              tab.bounds.position.y + 3.f});
+        window.draw(tabText);
+    }
+
+    if (activeTab == kShapesTabId) {
         float x = paletteRect.position.x + kPalettePad;
-        float y = paletteRect.position.y + 28.f;
+        float y = paletteRect.position.y + kPaletteTabBarHeight + 8.f;
         for (int i = 0; i < kBasicShapeCount; ++i) {
             sf::FloatRect slotBounds({x, y}, {kPaletteItemSize, kPaletteItemSize});
-            bool active = (i == selectedShapeId) && currentTool == Tool::Pencil;
+            bool active = (i == selectedShapeId) && (currentTool == Tool::Pencil || currentTool == Tool::Fill);
 
             sf::RectangleShape slot(slotBounds.size);
             slot.setPosition(slotBounds.position);
@@ -548,12 +597,24 @@ void DrawPalette(sf::RenderWindow& window, sf::Font& uiFont, const TileSet& tile
         return;
     }
 
+    const TileSet emptyTileSet;
+    const TileSet& tileSet = (activeTab >= 0 && activeTab < static_cast<int>(tilesets.size()))
+        ? tilesets[activeTab] : emptyTileSet;
+
+    if (!tileSet.loaded || tileSet.tileCount() <= 0) {
+        sf::Text hint(uiFont, "This tileset failed to load.", 13);
+        hint.setFillColor(sf::Color(140, 140, 150));
+        hint.setPosition({paletteRect.position.x + kPalettePad, paletteRect.position.y + kPaletteTabBarHeight + 6.f});
+        window.draw(hint);
+        return;
+    }
+
     for (const auto& item : ComputePaletteLayout(tileSet, paletteRect, scrollX)) {
         if (item.bounds.position.x + item.bounds.size.x < paletteRect.position.x ||
             item.bounds.position.x > paletteRect.position.x + paletteRect.size.x) {
             continue; // scrolled out of view
         }
-        bool active = (item.tileIndex == selectedTileIndex) && currentTool == Tool::Pencil;
+        bool active = (item.tileIndex == selectedTileIndex) && (activeTab == selectedTilesetIndex) && (currentTool == Tool::Pencil || currentTool == Tool::Fill);
 
         sf::RectangleShape slot(item.bounds.size);
         slot.setPosition(item.bounds.position);
@@ -630,6 +691,8 @@ bool RunMapEditorSession(sf::RenderWindow& window,
     sf::Texture texAddIcon, texImportIcon;
     bool addIconLoaded    = texAddIcon.loadFromFile(ICON_PATH + "add.png");
     bool importIconLoaded = texImportIcon.loadFromFile(ICON_PATH + "import-icon.png");
+    sf::Texture texCutIcon;
+    bool cutIconLoaded = texCutIcon.loadFromFile(ICON_PATH + "mouse-pointer-icon.png");
 
     sf::Texture editIconTexture;
     bool editIconLoaded = editIconTexture.loadFromFile("main/assets/images/UI/icons/edit.png");
@@ -646,12 +709,15 @@ bool RunMapEditorSession(sf::RenderWindow& window,
     auto isDirty = [&]() { return editor.undoDepth() != savedUndoDepth || tilesDirtySinceSave; };
 
     // ---------------- Tile layer / tile set state ----------------
-    const std::string TILESET_META_PATH = "main/assets/map/" + projectName + "/tileset.meta";
+    const std::string TILESET_META_PATH = "main/assets/map/" + projectName + "/tileset.meta"; // legacy single-tileset path
+    const std::string TILESETS_DIR = "main/assets/map/" + projectName + "/tilesets/";
     const std::string TILE_LAYER_PATH = "main/assets/map/" + projectName + "/tiles.layer";
     const std::string RAW_IMAGE_FOLDER = "main/assets/raw";
 
     EditorMode editorMode = EditorMode::TilePaint;
-    TileSet tileSet;
+    std::vector<TileSet> tilesets;      // every imported tileset for this project
+    int activeTilesetTab = kShapesTabId; // which tab the palette is currently showing (Shapes by default)
+    int selectedTilesetIndex = 0;       // which tileset the currently selected paint tile belongs to
     TileLayer tileLayer = isNewProject ? TileLayer(mapWidthTiles, mapHeightTiles) : TileLayer();
     int selectedTileIndex = 0;
     int selectedShapeId = 0; // which basic shape Pencil places when no tileset tile is selected (-1 = none)
@@ -662,10 +728,33 @@ bool RunMapEditorSession(sf::RenderWindow& window,
     // native file picker.
     AddPanelStage addPanelStage = AddPanelStage::None;
     std::string addImportPath;
+    std::string addImportName;
     int addImportTileW = 32;
     int addImportTileH = 32;
+
+    // ---- Tileset tab context menu (right-click a tab) ----
+    int tilesetMenuIndex = -1;         // index into `tilesets`, -1 = menu closed
+    sf::Vector2f tilesetMenuPos;
+    bool renamingTileset = false;
+    std::string renameTilesetBuffer;
+    bool confirmingDeleteTileset = false;
     ImportField addImportEditingField = ImportField::None;
     std::string addImportEditBuffer;
+
+    // Custom-cut mode: drag a rectangle over a preview of the source image
+    // to define a single tile of any size, instead of an even W x H grid.
+    sf::Texture addImportPreviewTexture;
+    bool addImportPreviewLoaded = false;
+    bool addImportCutDragging = false;
+    sf::Vector2f addImportCutStart;
+    sf::Vector2f addImportCutEnd;
+    bool addImportHasCut = false;
+    float addImportPreviewZoom = 1.f;
+    bool addImportMoveModeActive = false; // false = Cut mode, true = Move mode
+    sf::Vector2f addImportPreviewPan;      // pan offset, in preview-box pixel space
+    bool addImportPanning = false;
+    sf::Vector2f addImportPanDragStart;
+    sf::Vector2f addImportPreviewPanStart;
 
     constexpr int kCreateCanvasCells = 16;
     std::vector<sf::Color> createCanvasPixels(static_cast<size_t>(kCreateCanvasCells) * kCreateCanvasCells, sf::Color::Transparent);
@@ -707,7 +796,7 @@ bool RunMapEditorSession(sf::RenderWindow& window,
             futureStack.push_back(HistEntry{HistKind::Tile, tileLayer, shapeGrid});
             tileLayer = entry.tiles;
             shapeGrid = entry.shapes;
-            tileLayer.rebuildVertices(tileSet);
+            tileLayer.rebuildVertices(tilesets);
         }
     };
     auto performRedo = [&]() {
@@ -721,7 +810,7 @@ bool RunMapEditorSession(sf::RenderWindow& window,
             historyStack.push_back(HistEntry{HistKind::Tile, tileLayer, shapeGrid});
             tileLayer = entry.tiles;
             shapeGrid = entry.shapes;
-            tileLayer.rebuildVertices(tileSet);
+            tileLayer.rebuildVertices(tilesets);
         }
     };
 
@@ -747,11 +836,35 @@ bool RunMapEditorSession(sf::RenderWindow& window,
     sf::Clock resizeDoubleClickClock;
     const float DOUBLE_CLICK_MS = 350.f;
 
-    tileSet.loadMeta(TILESET_META_PATH); // restores the imported tileset, if any
+    // Restore every previously-imported tileset (one subfolder per tileset).
+    if (std::filesystem::exists(TILESETS_DIR)) {
+        std::vector<std::string> folderNames;
+        for (const auto& entry : std::filesystem::directory_iterator(TILESETS_DIR)) {
+            if (entry.is_directory()) folderNames.push_back(entry.path().filename().string());
+        }
+        std::sort(folderNames.begin(), folderNames.end());
+        for (const auto& folderName : folderNames) {
+            TileSet ts;
+            if (ts.loadMeta(TILESETS_DIR + folderName + "/tileset.meta")) {
+                ts.name = folderName;
+                tilesets.push_back(ts);
+            }
+        }
+    }
+    // Back-compat: migrate a pre-multi-tileset project's single tileset.meta into "Default".
+    if (tilesets.empty() && std::filesystem::exists(TILESET_META_PATH)) {
+        TileSet legacy;
+        if (legacy.loadMeta(TILESET_META_PATH)) {
+            legacy.name = "Default";
+            std::filesystem::create_directories(TILESETS_DIR + "Default");
+            legacy.saveMeta(TILESETS_DIR + "Default/tileset.meta");
+            tilesets.push_back(legacy);
+        }
+    }
     if (std::filesystem::exists(TILE_LAYER_PATH)) {
         tileLayer.load(TILE_LAYER_PATH); // restores the saved grid size + painted tiles
     }
-    tileLayer.rebuildVertices(tileSet);
+    tileLayer.rebuildVertices(tilesets);
     if (std::filesystem::exists(SHAPE_LAYER_PATH)) {
         shapeGrid.load(SHAPE_LAYER_PATH);
     } else {
@@ -767,15 +880,82 @@ bool RunMapEditorSession(sf::RenderWindow& window,
             importState.previewTexture.loadFromFile(RAW_IMAGE_FOLDER + "/" + importState.images[0]);
     };
 
+    // Copies `sourcePath` into its own named folder under tilesets/, loads it as a
+    // new TileSet, and appends it to the project's tileset list. Auto-numbers the
+    // name if left blank ("Tileset 2", "Tileset 3", ...).
+    auto finalizeTilesetImport = [&](const std::string& sourcePath, int tileW, int tileH, std::string desiredName) -> bool {
+        if (desiredName.empty()) desiredName = "Tileset " + std::to_string(tilesets.size() + 1);
+        std::string folder = TILESETS_DIR + desiredName;
+        std::error_code dirEc;
+        std::filesystem::create_directories(folder, dirEc);
+        std::string ext = std::filesystem::path(sourcePath).extension().string();
+        std::string destImagePath = folder + "/source" + ext;
+        std::error_code copyEc;
+        std::filesystem::copy_file(sourcePath, destImagePath, std::filesystem::copy_options::overwrite_existing, copyEc);
+
+        TileSet newSet;
+        if (!newSet.loadFromImage(destImagePath, tileW, tileH)) return false;
+        newSet.name = desiredName;
+        newSet.saveMeta(folder + "/tileset.meta");
+        tilesets.push_back(newSet);
+        activeTilesetTab = static_cast<int>(tilesets.size()) - 1;
+        selectedTilesetIndex = activeTilesetTab;
+        selectedTileIndex = 0;
+        paletteScrollX = 0.f;
+        tileLayer.rebuildVertices(tilesets);
+        editorMode = EditorMode::TilePaint;
+        return true;
+    };
+
+    auto renameTilesetOnDisk = [&](int idx, const std::string& newNameRaw) {
+        if (idx < 0 || idx >= static_cast<int>(tilesets.size())) return;
+        std::string newName = newNameRaw.empty() ? tilesets[idx].name : newNameRaw;
+        if (newName == tilesets[idx].name) return;
+        std::string oldFolder = TILESETS_DIR + tilesets[idx].name;
+        std::string newFolder = TILESETS_DIR + newName;
+        std::error_code ec;
+        std::filesystem::rename(oldFolder, newFolder, ec);
+        if (ec) return; // e.g. a tileset with that name already exists
+        if (tilesets[idx].imagePath.rfind(oldFolder, 0) == 0) {
+            tilesets[idx].imagePath = newFolder + tilesets[idx].imagePath.substr(oldFolder.size());
+        }
+        tilesets[idx].name = newName;
+        tilesets[idx].saveMeta(newFolder + "/tileset.meta");
+    };
+
+    auto deleteTilesetAndFolder = [&](int idx) {
+        if (idx < 0 || idx >= static_cast<int>(tilesets.size())) return;
+        std::string folder = TILESETS_DIR + tilesets[idx].name;
+        std::error_code ec;
+        std::filesystem::remove_all(folder, ec);
+
+        // Every cell that used this tileset is now orphaned; every cell that used a
+        // later tileset needs its index shifted down by one to stay valid.
+        for (int ty = 0; ty < tileLayer.heightTiles(); ++ty) {
+            for (int tx = 0; tx < tileLayer.widthTiles(); ++tx) {
+                TileCell c = tileLayer.get(tx, ty);
+                if (c.tilesetIndex == idx) {
+                    tileLayer.set(tx, ty, TileLayer::kEmpty, TileLayer::kEmpty);
+                } else if (c.tilesetIndex > idx) {
+                    tileLayer.set(tx, ty, c.tilesetIndex - 1, c.tileIndex);
+                }
+            }
+        }
+        tilesets.erase(tilesets.begin() + idx);
+
+        if (activeTilesetTab == idx) activeTilesetTab = kShapesTabId;
+        else if (activeTilesetTab > idx) activeTilesetTab -= 1;
+        if (selectedTilesetIndex == idx) { selectedTilesetIndex = 0; selectedShapeId = 0; }
+        else if (selectedTilesetIndex > idx) selectedTilesetIndex -= 1;
+
+        tileLayer.rebuildVertices(tilesets);
+        tilesDirtySinceSave = true;
+    };
+
     auto confirmImport = [&]() {
         if (importState.selectedImage < 0 || importState.selectedImage >= static_cast<int>(importState.images.size())) return;
         std::string path = RAW_IMAGE_FOLDER + "/" + importState.images[importState.selectedImage];
-        if (tileSet.loadFromImage(path, importState.tileW, importState.tileH)) {
-            tileSet.saveMeta(TILESET_META_PATH);
-            tileLayer.rebuildVertices(tileSet);
-            selectedTileIndex = 0;
-            paletteScrollX = 0.f;
-            editorMode = EditorMode::TilePaint;
+        if (finalizeTilesetImport(path, importState.tileW, importState.tileH, "")) {
             importState.open = false;
         }
     };
@@ -871,6 +1051,86 @@ bool RunMapEditorSession(sf::RenderWindow& window,
                 }
             }
 
+            // ---- Tileset delete confirmation ----
+            if (confirmingDeleteTileset) {
+                if (const auto* delMouse = event->getIf<sf::Event::MouseButtonPressed>()) {
+                    if (delMouse->button == sf::Mouse::Button::Left) {
+                        sf::Vector2f dMousePos(static_cast<float>(delMouse->position.x), static_cast<float>(delMouse->position.y));
+                        sf::FloatRect delYesBounds({WINDOW_WIDTH / 2.f - 110.f, WINDOW_HEIGHT / 2.f + 20.f}, {100.f, 36.f});
+                        sf::FloatRect delNoBounds({WINDOW_WIDTH / 2.f + 10.f, WINDOW_HEIGHT / 2.f + 20.f}, {100.f, 36.f});
+                        if (delYesBounds.contains(dMousePos)) {
+                            deleteTilesetAndFolder(tilesetMenuIndex);
+                            confirmingDeleteTileset = false;
+                            tilesetMenuIndex = -1;
+                        } else if (delNoBounds.contains(dMousePos)) {
+                            confirmingDeleteTileset = false;
+                        }
+                    }
+                    continue;
+                }
+                if (const auto* delKey = event->getIf<sf::Event::KeyPressed>()) {
+                    if (delKey->code == sf::Keyboard::Key::Y || delKey->code == sf::Keyboard::Key::Enter) {
+                        deleteTilesetAndFolder(tilesetMenuIndex);
+                        confirmingDeleteTileset = false;
+                        tilesetMenuIndex = -1;
+                    } else if (delKey->code == sf::Keyboard::Key::N || delKey->code == sf::Keyboard::Key::Escape) {
+                        confirmingDeleteTileset = false;
+                    }
+                    continue;
+                }
+                continue;
+            }
+
+            // ---- Tileset rename input ----
+            if (renamingTileset) {
+                if (const auto* renameTextEv = event->getIf<sf::Event::TextEntered>()) {
+                    char32_t unicode = renameTextEv->unicode;
+                    if (unicode == 8) {
+                        if (!renameTilesetBuffer.empty()) renameTilesetBuffer.pop_back();
+                    } else if (unicode >= 32 && unicode < 127) {
+                        char c = static_cast<char>(unicode);
+                        if (std::string("/\\:*?\"<>|").find(c) == std::string::npos) {
+                            renameTilesetBuffer += c;
+                        }
+                    }
+                    continue;
+                }
+                if (const auto* renameKeyEv = event->getIf<sf::Event::KeyPressed>()) {
+                    if (renameKeyEv->code == sf::Keyboard::Key::Enter) {
+                        renameTilesetOnDisk(tilesetMenuIndex, renameTilesetBuffer);
+                        renamingTileset = false;
+                        tilesetMenuIndex = -1;
+                    } else if (renameKeyEv->code == sf::Keyboard::Key::Escape) {
+                        renamingTileset = false;
+                        tilesetMenuIndex = -1;
+                    }
+                    continue;
+                }
+                continue;
+            }
+
+            // ---- Tileset tab context menu ----
+            if (tilesetMenuIndex != -1) {
+                if (const auto* menuMouse = event->getIf<sf::Event::MouseButtonPressed>()) {
+                    sf::Vector2f mMousePos(static_cast<float>(menuMouse->position.x), static_cast<float>(menuMouse->position.y));
+                    sf::FloatRect renameRow({tilesetMenuPos.x, tilesetMenuPos.y}, {100.f, 30.f});
+                    sf::FloatRect deleteRow({tilesetMenuPos.x, tilesetMenuPos.y + 30.f}, {100.f, 30.f});
+                    if (menuMouse->button == sf::Mouse::Button::Left && renameRow.contains(mMousePos)) {
+                        renamingTileset = true;
+                        renameTilesetBuffer = tilesets[tilesetMenuIndex].name;
+                    } else if (menuMouse->button == sf::Mouse::Button::Left && deleteRow.contains(mMousePos)) {
+                        confirmingDeleteTileset = true;
+                    } else {
+                        tilesetMenuIndex = -1;
+                    }
+                    continue;
+                }
+                if (const auto* menuKeyEv = event->getIf<sf::Event::KeyPressed>()) {
+                    if (menuKeyEv->code == sf::Keyboard::Key::Escape) tilesetMenuIndex = -1;
+                    continue;
+                }
+            }
+
             // ---- Sprite-sheet import panel takes priority over everything ----
             if (importState.open) {
                 if (const auto* textEntered = event->getIf<sf::Event::TextEntered>()) {
@@ -920,6 +1180,14 @@ bool RunMapEditorSession(sf::RenderWindow& window,
                         char32_t unicode = textEntered->unicode;
                         if (unicode == 8) {
                             if (!addImportEditBuffer.empty()) addImportEditBuffer.pop_back();
+                        } else if (addImportEditingField == ImportField::Name) {
+                            // Printable ASCII, excluding characters that aren't safe in folder names.
+                            if (unicode >= 32 && unicode < 127) {
+                                char c = static_cast<char>(unicode);
+                                if (std::string("/\\:*?\"<>|").find(c) == std::string::npos) {
+                                    addImportEditBuffer += c;
+                                }
+                            }
                         } else if (unicode >= '0' && unicode <= '9') {
                             addImportEditBuffer += static_cast<char>(unicode);
                         }
@@ -929,23 +1197,26 @@ bool RunMapEditorSession(sf::RenderWindow& window,
                 if (const auto* keyPressed = event->getIf<sf::Event::KeyPressed>()) {
                     if (keyPressed->code == sf::Keyboard::Key::Escape) {
                         if (addImportEditingField != ImportField::None) addImportEditingField = ImportField::None;
+                        else if (addPanelStage == AddPanelStage::CustomCut) addPanelStage = AddPanelStage::ImportSize;
                         else addPanelStage = AddPanelStage::None;
                     } else if (addPanelStage == AddPanelStage::ImportSize) {
                         if (keyPressed->code == sf::Keyboard::Key::Tab) {
-                            addImportEditingField = (addImportEditingField == ImportField::TileW) ? ImportField::TileH : ImportField::TileW;
-                            addImportEditBuffer = std::to_string(addImportEditingField == ImportField::TileW ? addImportTileW : addImportTileH);
+                            addImportEditingField = (addImportEditingField == ImportField::Name) ? ImportField::TileW
+                                                   : (addImportEditingField == ImportField::TileW) ? ImportField::TileH
+                                                   : ImportField::Name;
+                            addImportEditBuffer = (addImportEditingField == ImportField::Name) ? addImportName
+                                                 : std::to_string(addImportEditingField == ImportField::TileW ? addImportTileW : addImportTileH);
                         } else if (keyPressed->code == sf::Keyboard::Key::Enter) {
-                            if (addImportEditingField != ImportField::None) {
+                            if (addImportEditingField == ImportField::Name) {
+                                addImportName = addImportEditBuffer;
+                                addImportEditingField = ImportField::None;
+                            } else if (addImportEditingField != ImportField::None) {
                                 int v = ParseNumberOr(addImportEditBuffer, 32.f) > 0 ? static_cast<int>(ParseNumberOr(addImportEditBuffer, 32.f)) : 32;
                                 if (addImportEditingField == ImportField::TileW) addImportTileW = v; else addImportTileH = v;
                                 addImportEditingField = ImportField::None;
-                            } else if (tileSet.loadFromImage(addImportPath, addImportTileW, addImportTileH)) {
-                                tileSet.saveMeta(TILESET_META_PATH);
-                                tileLayer.rebuildVertices(tileSet);
-                                selectedTileIndex = 0;
-                                paletteScrollX = 0.f;
-                                editorMode = EditorMode::TilePaint;
+                            } else if (finalizeTilesetImport(addImportPath, addImportTileW, addImportTileH, addImportName)) {
                                 addPanelStage = AddPanelStage::None;
+                                addImportName.clear();
                             }
                         }
                     }
@@ -963,7 +1234,88 @@ bool RunMapEditorSession(sf::RenderWindow& window,
                                                static_cast<float>(quitMousePressed->position.y));
                         sf::FloatRect quitYesBounds({WINDOW_WIDTH / 2.f - 110.f, WINDOW_HEIGHT / 2.f + 20.f}, {100.f, 36.f});
                         sf::FloatRect quitNoBounds({WINDOW_WIDTH / 2.f + 10.f, WINDOW_HEIGHT / 2.f + 20.f}, {100.f, 36.f});
-                        if (exitPrompt == ExitPrompt::ConfirmQuit) {
+                        if (tilesetMenuIndex != -1 && !renamingTileset && !confirmingDeleteTileset) {
+            sf::RectangleShape menuBg({100.f, 60.f});
+            menuBg.setPosition(tilesetMenuPos);
+            menuBg.setFillColor(sf::Color(38, 38, 44));
+            menuBg.setOutlineThickness(1.f);
+            menuBg.setOutlineColor(sf::Color(90, 90, 240));
+            window.draw(menuBg);
+
+            sf::Text renameLabel(uiFont, "Rename", 14);
+            renameLabel.setFillColor(sf::Color::White);
+            renameLabel.setPosition({tilesetMenuPos.x + 10.f, tilesetMenuPos.y + 6.f});
+            window.draw(renameLabel);
+
+            sf::Text deleteLabel(uiFont, "Delete", 14);
+            deleteLabel.setFillColor(sf::Color(230, 120, 120));
+            deleteLabel.setPosition({tilesetMenuPos.x + 10.f, tilesetMenuPos.y + 36.f});
+            window.draw(deleteLabel);
+        }
+
+        if (renamingTileset) {
+            sf::RectangleShape dim({static_cast<float>(WINDOW_WIDTH), static_cast<float>(WINDOW_HEIGHT)});
+            dim.setFillColor(sf::Color(0, 0, 0, 140));
+            window.draw(dim);
+
+            float boxW = 300.f, boxH = 90.f;
+            float boxX = WINDOW_WIDTH / 2.f - boxW / 2.f;
+            float boxY = WINDOW_HEIGHT / 2.f - boxH / 2.f;
+            sf::RectangleShape box({boxW, boxH});
+            box.setPosition({boxX, boxY});
+            box.setFillColor(sf::Color(38, 38, 44));
+            box.setOutlineThickness(2.f);
+            box.setOutlineColor(sf::Color(90, 90, 240));
+            window.draw(box);
+
+            sf::Text title(uiFont, "Rename tileset ([Enter] confirm, [Esc] cancel)", 13);
+            title.setFillColor(sf::Color::White);
+            title.setPosition({boxX + boxW / 2.f - title.getLocalBounds().size.x / 2.f, boxY + 12.f});
+            window.draw(title);
+
+            sf::FloatRect nameRow({boxX + 20.f, boxY + 44.f}, {boxW - 40.f, 28.f});
+            DrawInspectorRow(window, uiFont, nameRow, "Name", renameTilesetBuffer, true);
+        }
+
+        if (confirmingDeleteTileset) {
+            sf::RectangleShape overlay({static_cast<float>(WINDOW_WIDTH), static_cast<float>(WINDOW_HEIGHT)});
+            overlay.setFillColor(sf::Color(0, 0, 0, 150));
+            window.draw(overlay);
+
+            sf::RectangleShape dialog({340.f, 130.f});
+            dialog.setPosition({WINDOW_WIDTH / 2.f - 170.f, WINDOW_HEIGHT / 2.f - 60.f});
+            dialog.setFillColor(sf::Color(38, 38, 44));
+            dialog.setOutlineThickness(2.f);
+            dialog.setOutlineColor(sf::Color(230, 90, 90));
+            window.draw(dialog);
+
+            std::string delName = (tilesetMenuIndex >= 0 && tilesetMenuIndex < static_cast<int>(tilesets.size()))
+                ? tilesets[tilesetMenuIndex].name : "this tileset";
+            sf::Text delQuestion(uiFont, "Delete \"" + delName + "\"?", 20);
+            delQuestion.setPosition({WINDOW_WIDTH / 2.f - delQuestion.getLocalBounds().size.x / 2.f, WINDOW_HEIGHT / 2.f - 40.f});
+            delQuestion.setFillColor(sf::Color::White);
+            window.draw(delQuestion);
+
+            sf::RectangleShape delYesBtn({100.f, 36.f});
+            delYesBtn.setPosition({WINDOW_WIDTH / 2.f - 110.f, WINDOW_HEIGHT / 2.f + 20.f});
+            delYesBtn.setFillColor(sf::Color(230, 90, 90));
+            window.draw(delYesBtn);
+            sf::Text delYesLabel(uiFont, "Delete", 16);
+            delYesLabel.setFillColor(sf::Color::White);
+            delYesLabel.setPosition({WINDOW_WIDTH / 2.f - 110.f + 18.f, WINDOW_HEIGHT / 2.f + 26.f});
+            window.draw(delYesLabel);
+
+            sf::RectangleShape delNoBtn({100.f, 36.f});
+            delNoBtn.setPosition({WINDOW_WIDTH / 2.f + 10.f, WINDOW_HEIGHT / 2.f + 20.f});
+            delNoBtn.setFillColor(sf::Color(70, 70, 78));
+            window.draw(delNoBtn);
+            sf::Text delNoLabel(uiFont, "Cancel", 16);
+            delNoLabel.setFillColor(sf::Color::White);
+            delNoLabel.setPosition({WINDOW_WIDTH / 2.f + 10.f + 20.f, WINDOW_HEIGHT / 2.f + 26.f});
+            window.draw(delNoLabel);
+        }
+
+        if (exitPrompt == ExitPrompt::ConfirmQuit) {
                             if (quitYesBounds.contains(qMousePos)) {
                                 exitPrompt = isDirty() ? ExitPrompt::ConfirmSaveQuit : ExitPrompt::None;
                                 if (exitPrompt == ExitPrompt::None) window.close();
@@ -1058,15 +1410,50 @@ bool RunMapEditorSession(sf::RenderWindow& window,
 
             if (const auto* wheel = event->getIf<sf::Event::MouseWheelScrolled>()) {
                 sf::Vector2f wheelScreenPos(static_cast<float>(wheel->position.x), static_cast<float>(wheel->position.y));
+                if (addPanelStage == AddPanelStage::CustomCut) {
+                    float boxWCut = 460.f, boxHCut = 420.f;
+                    float boxXCut = WINDOW_WIDTH / 2.f - boxWCut / 2.f;
+                    float boxYCut = WINDOW_HEIGHT / 2.f - boxHCut / 2.f;
+                    sf::FloatRect previewRectCut({boxXCut + 20.f, boxYCut + 40.f}, {boxWCut - 40.f, 260.f});
+                    if (previewRectCut.contains(wheelScreenPos) && addImportPreviewLoaded) {
+                        sf::Vector2u texSize = addImportPreviewTexture.getSize();
+                        float baseScale = std::min(previewRectCut.size.x / std::max(1u, texSize.x),
+                                                    previewRectCut.size.y / std::max(1u, texSize.y));
+                        float oldScale = baseScale * addImportPreviewZoom;
+
+                        float zoomStep = (wheel->delta > 0) ? 1.1f : 0.9f;
+                        float newZoom = std::clamp(addImportPreviewZoom * zoomStep, 0.25f, 8.f);
+                        float newScale = baseScale * newZoom;
+
+                        // Keep the texture pixel under the cursor fixed on screen while zooming.
+                        float mx = wheelScreenPos.x - previewRectCut.position.x;
+                        float my = wheelScreenPos.y - previewRectCut.position.y;
+                        float offsetXOld = (previewRectCut.size.x - texSize.x * oldScale) / 2.f + addImportPreviewPan.x;
+                        float offsetYOld = (previewRectCut.size.y - texSize.y * oldScale) / 2.f + addImportPreviewPan.y;
+                        float ratio = newScale / oldScale;
+                        float offsetXNew = mx - ratio * (mx - offsetXOld);
+                        float offsetYNew = my - ratio * (my - offsetYOld);
+
+                        addImportPreviewZoom = newZoom;
+                        addImportPreviewPan.x = offsetXNew - (previewRectCut.size.x - texSize.x * newScale) / 2.f;
+                        addImportPreviewPan.y = offsetYNew - (previewRectCut.size.y - texSize.y * newScale) / 2.f;
+                    }
+                    continue;
+                }
                 sf::FloatRect paletteRect = ComputePaletteRect(WINDOW_WIDTH, WINDOW_HEIGHT);
                 if (paletteRect.contains(wheelScreenPos)) {
-                    float contentWidth = PaletteContentWidth(tileSet);
+                    float contentWidth = PaletteContentWidth((activeTilesetTab >= 0 && activeTilesetTab < static_cast<int>(tilesets.size())) ? tilesets[activeTilesetTab] : TileSet());
                     float maxScroll = std::max(0.f, contentWidth - paletteRect.size.x);
                     paletteScrollX -= wheel->delta * 40.f;
                     paletteScrollX = std::clamp(paletteScrollX, 0.f, maxScroll);
                 } else {
+                    sf::Vector2f beforeCoord = window.mapPixelToCoords(
+                        sf::Vector2i(static_cast<int>(wheelScreenPos.x), static_cast<int>(wheelScreenPos.y)), camera);
                     float zoomFactor = (wheel->delta > 0) ? 0.9f : 1.1f;
                     camera.zoom(zoomFactor);
+                    sf::Vector2f afterCoord = window.mapPixelToCoords(
+                        sf::Vector2i(static_cast<int>(wheelScreenPos.x), static_cast<int>(wheelScreenPos.y)), camera);
+                    camera.move(beforeCoord - afterCoord);
                 }
             }
 
@@ -1098,7 +1485,9 @@ bool RunMapEditorSession(sf::RenderWindow& window,
                     else if (L.hRow.contains(screenPos)) { beginEditingField(InspectorField::H, obj.h); continue; }
                     else if (L.rotRow.contains(screenPos)) { beginEditingField(InspectorField::Rotation, obj.rotation); continue; }
                 }
-                if (screenPos.x >= static_cast<float>(WINDOW_WIDTH) - kInspectorWidth) {
+                if (ComputeAddButtonBounds(WINDOW_WIDTH, WINDOW_HEIGHT).contains(screenPos)) {
+                    // Let the Add button click through even though it overlaps the inspector dock's x-range.
+                } else if (screenPos.x >= static_cast<float>(WINDOW_WIDTH) - kInspectorWidth) {
                     // Click landed inside the inspector dock but not on a row: ignore.
                     continue;
                 }
@@ -1185,13 +1574,14 @@ bool RunMapEditorSession(sf::RenderWindow& window,
                             int copyH = std::min(resizePendingH, tileLayer.heightTiles());
                             for (int ty = 0; ty < copyH; ++ty) {
                                 for (int tx = 0; tx < copyW; ++tx) {
-                                    resized.set(tx, ty, tileLayer.get(tx, ty));
+                                    TileCell srcCell = tileLayer.get(tx, ty);
+                                    resized.set(tx, ty, srcCell.tilesetIndex, srcCell.tileIndex);
                                     resizedShapes.set(tx, ty, shapeGrid.get(tx, ty));
                                 }
                             }
                             tileLayer = resized;
                             shapeGrid = resizedShapes;
-                            tileLayer.rebuildVertices(tileSet);
+                            tileLayer.rebuildVertices(tilesets);
                             tileLayer.save(TILE_LAYER_PATH);
                             shapeGrid.save(SHAPE_LAYER_PATH);
                             resizingMap = false;
@@ -1233,6 +1623,7 @@ bool RunMapEditorSession(sf::RenderWindow& window,
                             std::string picked = OpenFileDialogForImage();
                             if (!picked.empty()) {
                                 addImportPath = picked;
+                                addImportPreviewLoaded = addImportPreviewTexture.loadFromFile(addImportPath);
                                 addPanelStage = AddPanelStage::ImportSize;
                             } else {
                                 addPanelStage = AddPanelStage::None;
@@ -1241,34 +1632,92 @@ bool RunMapEditorSession(sf::RenderWindow& window,
                             addPanelStage = AddPanelStage::None;
                         }
                     } else if (addPanelStage == AddPanelStage::ImportSize) {
-                        float boxW = 360.f, boxH = 180.f;
+                        float boxW = 360.f, boxH = 216.f;
                         float boxX = WINDOW_WIDTH / 2.f - boxW / 2.f;
                         float boxY = WINDOW_HEIGHT / 2.f - boxH / 2.f;
                         if (!sf::FloatRect({boxX, boxY}, {boxW, boxH}).contains(screenPos)) {
                             addPanelStage = AddPanelStage::None;
                             continue;
                         }
-                        sf::FloatRect wRow({boxX + 30.f, boxY + 60.f}, {boxW - 60.f, 28.f});
-                        sf::FloatRect hRow({boxX + 30.f, boxY + 96.f}, {boxW - 60.f, 28.f});
+                        sf::FloatRect nameRow({boxX + 30.f, boxY + 60.f}, {boxW - 60.f, 28.f});
+                        sf::FloatRect wRow({boxX + 30.f, boxY + 96.f}, {boxW - 60.f, 28.f});
+                        sf::FloatRect hRow({boxX + 30.f, boxY + 132.f}, {boxW - 60.f, 28.f});
                         sf::FloatRect confirmBtn({boxX + 30.f, boxY + boxH - 46.f}, {140.f, 32.f});
                         sf::FloatRect cancelBtn({boxX + boxW - 170.f, boxY + boxH - 46.f}, {140.f, 32.f});
-                        if (wRow.contains(screenPos)) {
+                        sf::FloatRect customCutBtn({boxX + boxW - 130.f, boxY + 34.f}, {110.f, 20.f});
+                        if (customCutBtn.contains(screenPos)) {
+                            addImportHasCut = false;
+                            addImportCutDragging = false;
+                            addImportPreviewZoom = 1.f;
+                            addImportPreviewPan = {0.f, 0.f};
+                            addImportMoveModeActive = false;
+                            addPanelStage = AddPanelStage::CustomCut;
+                        } else if (nameRow.contains(screenPos)) {
+                            addImportEditingField = ImportField::Name;
+                            addImportEditBuffer = addImportName;
+                        } else if (wRow.contains(screenPos)) {
                             addImportEditingField = ImportField::TileW;
                             addImportEditBuffer = std::to_string(addImportTileW);
                         } else if (hRow.contains(screenPos)) {
                             addImportEditingField = ImportField::TileH;
                             addImportEditBuffer = std::to_string(addImportTileH);
                         } else if (confirmBtn.contains(screenPos)) {
-                            if (tileSet.loadFromImage(addImportPath, addImportTileW, addImportTileH)) {
-                                tileSet.saveMeta(TILESET_META_PATH);
-                                tileLayer.rebuildVertices(tileSet);
-                                selectedTileIndex = 0;
-                                paletteScrollX = 0.f;
-                                editorMode = EditorMode::TilePaint;
+                            if (addImportEditingField == ImportField::Name) addImportName = addImportEditBuffer;
+                            if (finalizeTilesetImport(addImportPath, addImportTileW, addImportTileH, addImportName)) {
+                                addPanelStage = AddPanelStage::None;
+                                addImportName.clear();
                             }
-                            addPanelStage = AddPanelStage::None;
                         } else if (cancelBtn.contains(screenPos)) {
                             addPanelStage = AddPanelStage::None;
+                        }
+                    } else if (addPanelStage == AddPanelStage::CustomCut) {
+                        float boxW = 460.f, boxH = 420.f;
+                        float boxX = WINDOW_WIDTH / 2.f - boxW / 2.f;
+                        float boxY = WINDOW_HEIGHT / 2.f - boxH / 2.f;
+                        sf::FloatRect previewRect({boxX + 20.f, boxY + 40.f}, {boxW - 40.f, 260.f});
+                        sf::FloatRect confirmCutBtn({boxX + 30.f, boxY + boxH - 46.f}, {140.f, 32.f});
+                        sf::FloatRect backBtn({boxX + boxW - 170.f, boxY + boxH - 46.f}, {140.f, 32.f});
+                        sf::FloatRect moveModeBtn({boxX + boxW / 2.f - 37.f, boxY + boxH - 90.f}, {32.f, 28.f});
+                        sf::FloatRect cutModeBtn({boxX + boxW / 2.f + 5.f, boxY + boxH - 90.f}, {32.f, 28.f});
+                        if (moveModeBtn.contains(screenPos)) {
+                            addImportMoveModeActive = true;
+                        } else if (cutModeBtn.contains(screenPos)) {
+                            addImportMoveModeActive = false;
+                        } else if (previewRect.contains(screenPos) && addImportMoveModeActive) {
+                            addImportPanning = true;
+                            addImportPanDragStart = screenPos;
+                            addImportPreviewPanStart = addImportPreviewPan;
+                        } else if (previewRect.contains(screenPos)) {
+                            addImportCutDragging = true;
+                            addImportCutStart = screenPos;
+                            addImportCutEnd = screenPos;
+                            addImportHasCut = false;
+                        } else if (confirmCutBtn.contains(screenPos) && addImportHasCut && addImportPreviewLoaded) {
+                            sf::Vector2u texSize = addImportPreviewTexture.getSize();
+                            float scale = std::min(previewRect.size.x / std::max(1u, texSize.x), previewRect.size.y / std::max(1u, texSize.y)) * addImportPreviewZoom;
+                            float imgOriginX = previewRect.position.x + (previewRect.size.x - texSize.x * scale) / 2.f + addImportPreviewPan.x;
+                            float imgOriginY = previewRect.position.y + (previewRect.size.y - texSize.y * scale) / 2.f + addImportPreviewPan.y;
+                            sf::Vector2f p0(std::min(addImportCutStart.x, addImportCutEnd.x), std::min(addImportCutStart.y, addImportCutEnd.y));
+                            sf::Vector2f p1(std::max(addImportCutStart.x, addImportCutEnd.x), std::max(addImportCutStart.y, addImportCutEnd.y));
+                            int cutX = static_cast<int>(std::clamp((p0.x - imgOriginX) / scale, 0.f, static_cast<float>(texSize.x)));
+                            int cutY = static_cast<int>(std::clamp((p0.y - imgOriginY) / scale, 0.f, static_cast<float>(texSize.y)));
+                            int cutW = static_cast<int>(std::clamp((p1.x - imgOriginX) / scale, 0.f, static_cast<float>(texSize.x))) - cutX;
+                            int cutH = static_cast<int>(std::clamp((p1.y - imgOriginY) / scale, 0.f, static_cast<float>(texSize.y))) - cutY;
+                            if (cutW > 0 && cutH > 0) {
+                                sf::Image fullImage = addImportPreviewTexture.copyToImage();
+                                sf::Image cropped(sf::Vector2u(static_cast<unsigned>(cutW), static_cast<unsigned>(cutH)));
+                                cropped.copy(fullImage, {0, 0}, sf::IntRect({cutX, cutY}, {cutW, cutH}));
+                                std::string tempPath = TILESETS_DIR + "_custom_cut_tmp.png";
+                                if (cropped.saveToFile(tempPath) &&
+                                    finalizeTilesetImport(tempPath, cutW, cutH, addImportName)) {
+                                    addPanelStage = AddPanelStage::None;
+                                    addImportName.clear();
+                                    addImportHasCut = false;
+                                }
+                            }
+                        } else if (backBtn.contains(screenPos)) {
+                            addPanelStage = AddPanelStage::ImportSize;
+                            addImportHasCut = false;
                         }
                     } else if (addPanelStage == AddPanelStage::Create) {
                         float boxW = 380.f, boxH = 460.f;
@@ -1322,26 +1771,58 @@ bool RunMapEditorSession(sf::RenderWindow& window,
                 if (mousePressed->button == sf::Mouse::Button::Left) {
                     sf::FloatRect paletteRect = ComputePaletteRect(WINDOW_WIDTH, WINDOW_HEIGHT);
                     if (paletteRect.contains(screenPos)) {
-                        if (!tileSet.loaded || tileSet.tileCount() <= 0) {
+                        bool hitTab = false;
+                        for (const auto& tab : ComputePaletteTabLayout(tilesets, paletteRect)) {
+                            if (tab.bounds.contains(screenPos)) {
+                                hitTab = true;
+                                if (tab.tilesetIndex == kAddTabId) {
+                                    addPanelStage = AddPanelStage::ChooseAction; // "+" tab: open the import flow
+                                } else {
+                                    activeTilesetTab = tab.tilesetIndex;
+                                    paletteScrollX = 0.f;
+                                }
+                                break;
+                            }
+                        }
+                        if (hitTab) { continue; }
+
+                        if (activeTilesetTab == kShapesTabId) {
                             float x = paletteRect.position.x + kPalettePad;
-                            float y = paletteRect.position.y + 28.f;
+                            float y = paletteRect.position.y + kPaletteTabBarHeight + 8.f;
                             for (int i = 0; i < kBasicShapeCount; ++i) {
                                 sf::FloatRect slotBounds({x, y}, {kPaletteItemSize, kPaletteItemSize});
                                 if (slotBounds.contains(screenPos)) {
                                     selectedShapeId = i;
-                                    currentTool = Tool::Pencil;
+                                    if (currentTool != Tool::Fill) currentTool = Tool::Pencil;
                                     break;
                                 }
                                 x += kPaletteItemSize + kPalettePad;
                             }
-                        } else {
-                            for (const auto& item : ComputePaletteLayout(tileSet, paletteRect, paletteScrollX)) {
+                        } else if (activeTilesetTab >= 0 && activeTilesetTab < static_cast<int>(tilesets.size())) {
+                            const TileSet& activeTileSet = tilesets[activeTilesetTab];
+                            for (const auto& item : ComputePaletteLayout(activeTileSet, paletteRect, paletteScrollX)) {
                                 if (item.bounds.contains(screenPos)) {
                                     selectedTileIndex = item.tileIndex;
+                                    selectedTilesetIndex = activeTilesetTab;
                                     selectedShapeId = -1; // a tileset tile is now active instead of a shape
-                                    currentTool = Tool::Pencil;
+                                    if (currentTool != Tool::Fill) currentTool = Tool::Pencil;
                                     break;
                                 }
+                            }
+                        }
+                        continue;
+                    }
+                }
+
+                // ---- Right-click a tab: open its Rename/Delete context menu ----
+                if (mousePressed->button == sf::Mouse::Button::Right) {
+                    sf::FloatRect paletteRectR = ComputePaletteRect(WINDOW_WIDTH, WINDOW_HEIGHT);
+                    if (paletteRectR.contains(screenPos)) {
+                        for (const auto& tab : ComputePaletteTabLayout(tilesets, paletteRectR)) {
+                            if (tab.tilesetIndex >= 0 && tab.bounds.contains(screenPos)) {
+                                tilesetMenuIndex = tab.tilesetIndex;
+                                tilesetMenuPos = {screenPos.x, tab.bounds.position.y + tab.bounds.size.y};
+                                break;
                             }
                         }
                         continue;
@@ -1376,17 +1857,20 @@ bool RunMapEditorSession(sf::RenderWindow& window,
                     if (currentTool == Tool::Pencil) {
                         if (selectedShapeId >= 0) {
                             shapeGrid.set(cell.x, cell.y, selectedShapeId);
-                            tileLayer.set(cell.x, cell.y, TileLayer::kEmpty);
+                            tileLayer.set(cell.x, cell.y, TileLayer::kEmpty, TileLayer::kEmpty);
                         } else {
-                            tileLayer.set(cell.x, cell.y, selectedTileIndex);
+                            tileLayer.set(cell.x, cell.y, selectedTilesetIndex, selectedTileIndex);
                             shapeGrid.set(cell.x, cell.y, -1);
                         }
                     }
                     else if (currentTool == Tool::Eraser) {
-                        tileLayer.set(cell.x, cell.y, TileLayer::kEmpty);
+                        tileLayer.set(cell.x, cell.y, TileLayer::kEmpty, TileLayer::kEmpty);
                         shapeGrid.set(cell.x, cell.y, -1);
                     }
-                    else if (currentTool == Tool::Fill) FloodFillTile(tileLayer, cell.x, cell.y, selectedTileIndex);
+                    else if (currentTool == Tool::Fill) {
+                        if (selectedShapeId >= 0) FloodFillShape(shapeGrid, tileLayer, cell.x, cell.y, selectedShapeId);
+                        else FloodFillTile(tileLayer, shapeGrid, cell.x, cell.y, selectedTilesetIndex, selectedTileIndex);
+                    }
                     else if (currentTool == Tool::Pointer) {
                         pointerTileX = cell.x;
                         pointerTileY = cell.y;
@@ -1399,7 +1883,7 @@ bool RunMapEditorSession(sf::RenderWindow& window,
                          mousePressed->button == sf::Mouse::Button::Right) {
                     sf::Vector2i cell = tileLayer.worldToTile(worldPos);
                     beginTileStroke();
-                    tileLayer.set(cell.x, cell.y, TileLayer::kEmpty);
+                    tileLayer.set(cell.x, cell.y, TileLayer::kEmpty, TileLayer::kEmpty);
                     shapeGrid.set(cell.x, cell.y, -1);
                     continue;
                 }
@@ -1447,6 +1931,13 @@ bool RunMapEditorSession(sf::RenderWindow& window,
                     panningCamera = false;
                 }
                 if (mouseReleased->button == sf::Mouse::Button::Left) {
+                    if (addImportPanning) {
+                        addImportPanning = false;
+                    }
+                    if (addImportCutDragging) {
+                        addImportCutDragging = false;
+                        addImportHasCut = true;
+                    }
                     if (currentTool == Tool::Move) {
                         panningCamera = false;
                     }
@@ -1480,7 +1971,17 @@ bool RunMapEditorSession(sf::RenderWindow& window,
             }
 
             if (const auto* mouseMoved = event->getIf<sf::Event::MouseMoved>()) {
-                if (editorMode == EditorMode::TilePaint && currentTool != Tool::Move &&
+                if (addImportPanning) {
+                    sf::Vector2f nowPos(static_cast<float>(mouseMoved->position.x), static_cast<float>(mouseMoved->position.y));
+                    sf::Vector2f panDelta = nowPos - addImportPanDragStart;
+                    addImportPreviewPan.x = addImportPreviewPanStart.x + panDelta.x;
+                    addImportPreviewPan.y = addImportPreviewPanStart.y + panDelta.y;
+                }
+                if (addImportCutDragging) {
+                    addImportCutEnd = sf::Vector2f(static_cast<float>(mouseMoved->position.x), static_cast<float>(mouseMoved->position.y));
+                }
+                if (addPanelStage == AddPanelStage::None &&
+                    editorMode == EditorMode::TilePaint && currentTool != Tool::Move &&
                     sf::Mouse::isButtonPressed(sf::Mouse::Button::Left)) {
                     sf::FloatRect canvasRectNow = ComputeCanvasRect(WINDOW_WIDTH, WINDOW_HEIGHT);
                     sf::Vector2f screenPosNow(static_cast<float>(mouseMoved->position.x), static_cast<float>(mouseMoved->position.y));
@@ -1490,14 +1991,14 @@ bool RunMapEditorSession(sf::RenderWindow& window,
                         if (currentTool == Tool::Pencil) {
                             if (selectedShapeId >= 0) {
                                 shapeGrid.set(cell.x, cell.y, selectedShapeId);
-                                tileLayer.set(cell.x, cell.y, TileLayer::kEmpty);
+                                tileLayer.set(cell.x, cell.y, TileLayer::kEmpty, TileLayer::kEmpty);
                             } else {
-                                tileLayer.set(cell.x, cell.y, selectedTileIndex);
+                                tileLayer.set(cell.x, cell.y, selectedTilesetIndex, selectedTileIndex);
                                 shapeGrid.set(cell.x, cell.y, -1);
                             }
                         }
                         else if (currentTool == Tool::Eraser) {
-                            tileLayer.set(cell.x, cell.y, TileLayer::kEmpty);
+                            tileLayer.set(cell.x, cell.y, TileLayer::kEmpty, TileLayer::kEmpty);
                             shapeGrid.set(cell.x, cell.y, -1);
                         }
                     }
@@ -1538,10 +2039,12 @@ bool RunMapEditorSession(sf::RenderWindow& window,
                             int copyW = std::min(resizePendingW, tileLayer.widthTiles());
                             int copyH = std::min(resizePendingH, tileLayer.heightTiles());
                             for (int ty = 0; ty < copyH; ++ty)
-                                for (int tx = 0; tx < copyW; ++tx)
-                                    resized.set(tx, ty, tileLayer.get(tx, ty));
+                                for (int tx = 0; tx < copyW; ++tx) {
+                                    TileCell srcCell = tileLayer.get(tx, ty);
+                                    resized.set(tx, ty, srcCell.tilesetIndex, srcCell.tileIndex);
+                                }
                             tileLayer = resized;
-                            tileLayer.rebuildVertices(tileSet);
+                            tileLayer.rebuildVertices(tilesets);
                             tileLayer.save(TILE_LAYER_PATH);
                     shapeGrid.save(SHAPE_LAYER_PATH);
                     tilesDirtySinceSave = false;
@@ -1657,7 +2160,7 @@ bool RunMapEditorSession(sf::RenderWindow& window,
                 else if (ctrlHeld && keyPressed->code == sf::Keyboard::Key::O) {
                     editor.loadFromFile(SAVE_PATH);
                     tileLayer.load(TILE_LAYER_PATH);
-                    tileLayer.rebuildVertices(tileSet);
+                    tileLayer.rebuildVertices(tilesets);
                     shapeGrid.load(SHAPE_LAYER_PATH);
                     savedUndoDepth = editor.undoDepth();
                 }
@@ -1702,9 +2205,9 @@ bool RunMapEditorSession(sf::RenderWindow& window,
 
         if (tileLayer.dirty) {
             tilesDirtySinceSave = true; // tile/shape paint happened; rebuildVertices() below clears the transient flag, not this one
-            tileLayer.rebuildVertices(tileSet);
+            tileLayer.rebuildVertices(tilesets);
         }
-        tileLayer.draw(window, tileSet); // background art, drawn beneath objects
+        tileLayer.draw(window, tilesets); // background art, drawn beneath objects
         DrawShapeGrid(window, camera, tileLayer, shapeGrid); // placed Square/Circle/Triangle/Slope pieces
         DrawTileGrid(window, camera, tileLayer); // faint grid + bright map-bounds outline
 
@@ -1902,30 +2405,7 @@ bool RunMapEditorSession(sf::RenderWindow& window,
         DrawToolbar(window, uiFont, currentTool, texPencil, texEraser, texFill, texMove, texPointer);
 
         // Bottom tile-piece palette (pieces from the imported tileset: Box/Circle/Triangle/etc.)
-        DrawPalette(window, uiFont, tileSet, ComputePaletteRect(WINDOW_WIDTH, WINDOW_HEIGHT), paletteScrollX, selectedTileIndex, selectedShapeId, currentTool);
-
-        // ---- "Add" button ----
-        {
-            sf::FloatRect addBounds = ComputeAddButtonBounds(WINDOW_WIDTH, WINDOW_HEIGHT);
-            sf::RectangleShape addBg(addBounds.size);
-            addBg.setPosition(addBounds.position);
-            addBg.setFillColor(sf::Color(45, 45, 52));
-            addBg.setOutlineThickness(1.f);
-            addBg.setOutlineColor(sf::Color(80, 80, 90));
-            window.draw(addBg);
-            if (addIconLoaded) {
-                sf::Sprite addSprite(texAddIcon);
-                sf::Vector2u texSize = texAddIcon.getSize();
-                addSprite.setScale({addBounds.size.x / std::max(1u, texSize.x), addBounds.size.y / std::max(1u, texSize.y)});
-                addSprite.setPosition(addBounds.position);
-                window.draw(addSprite);
-            } else {
-                sf::Text addFallback(uiFont, "+", 18);
-                addFallback.setFillColor(sf::Color(200, 200, 210));
-                addFallback.setPosition({addBounds.position.x + 6.f, addBounds.position.y - 2.f});
-                window.draw(addFallback);
-            }
-        }
+        DrawPalette(window, uiFont, tilesets, activeTilesetTab, ComputePaletteRect(WINDOW_WIDTH, WINDOW_HEIGHT), paletteScrollX, selectedTilesetIndex, selectedTileIndex, selectedShapeId, currentTool);
 
         if (addPanelStage == AddPanelStage::ChooseAction) {
             sf::RectangleShape dim({static_cast<float>(WINDOW_WIDTH), static_cast<float>(WINDOW_HEIGHT)});
@@ -1991,7 +2471,7 @@ bool RunMapEditorSession(sf::RenderWindow& window,
             dim.setFillColor(sf::Color(0, 0, 0, 160));
             window.draw(dim);
 
-            float boxW = 360.f, boxH = 180.f;
+            float boxW = 360.f, boxH = 216.f;
             float boxX = WINDOW_WIDTH / 2.f - boxW / 2.f;
             float boxY = WINDOW_HEIGHT / 2.f - boxH / 2.f;
             sf::RectangleShape box({boxW, boxH});
@@ -2001,13 +2481,27 @@ bool RunMapEditorSession(sf::RenderWindow& window,
             box.setOutlineColor(sf::Color(90, 90, 240));
             window.draw(box);
 
-            sf::Text title(uiFont, "Tile size ([Tab] switch, [Enter] confirm)", 15);
+            sf::Text title(uiFont, "Name it, then set tile size ([Tab] switch, [Enter] confirm)", 14);
             title.setFillColor(sf::Color::White);
             title.setPosition({boxX + boxW / 2.f - title.getLocalBounds().size.x / 2.f, boxY + 14.f});
             window.draw(title);
 
-            sf::FloatRect wRow({boxX + 30.f, boxY + 60.f}, {boxW - 60.f, 28.f});
-            sf::FloatRect hRow({boxX + 30.f, boxY + 96.f}, {boxW - 60.f, 28.f});
+            sf::FloatRect customCutBtnDraw({boxX + boxW - 130.f, boxY + 34.f}, {110.f, 20.f});
+            sf::RectangleShape customCutBg(customCutBtnDraw.size);
+            customCutBg.setPosition(customCutBtnDraw.position);
+            customCutBg.setFillColor(sf::Color(70, 70, 90));
+            window.draw(customCutBg);
+            sf::Text customCutText(uiFont, "Custom Cut", 12);
+            customCutText.setPosition({customCutBtnDraw.position.x + 8.f, customCutBtnDraw.position.y + 3.f});
+            window.draw(customCutText);
+
+            sf::FloatRect nameRow({boxX + 30.f, boxY + 60.f}, {boxW - 60.f, 28.f});
+            sf::FloatRect wRow({boxX + 30.f, boxY + 96.f}, {boxW - 60.f, 28.f});
+            sf::FloatRect hRow({boxX + 30.f, boxY + 132.f}, {boxW - 60.f, 28.f});
+            std::string nameDisplay = addImportEditingField == ImportField::Name ? addImportEditBuffer : addImportName;
+            DrawInspectorRow(window, uiFont, nameRow, "Name",
+                              nameDisplay.empty() ? "(auto)" : nameDisplay,
+                              addImportEditingField == ImportField::Name);
             DrawInspectorRow(window, uiFont, wRow, "Tile W",
                               addImportEditingField == ImportField::TileW ? addImportEditBuffer : std::to_string(addImportTileW),
                               addImportEditingField == ImportField::TileW);
@@ -2032,6 +2526,105 @@ bool RunMapEditorSession(sf::RenderWindow& window,
             sf::Text cancelText(uiFont, "Cancel", 14);
             cancelText.setPosition({cancelBtn.position.x + 36.f, cancelBtn.position.y + 8.f});
             window.draw(cancelText);
+        }
+        else if (addPanelStage == AddPanelStage::CustomCut) {
+            sf::RectangleShape dim({static_cast<float>(WINDOW_WIDTH), static_cast<float>(WINDOW_HEIGHT)});
+            dim.setFillColor(sf::Color(0, 0, 0, 160));
+            window.draw(dim);
+
+            float boxW = 460.f, boxH = 420.f;
+            float boxX = WINDOW_WIDTH / 2.f - boxW / 2.f;
+            float boxY = WINDOW_HEIGHT / 2.f - boxH / 2.f;
+            sf::RectangleShape box({boxW, boxH});
+            box.setPosition({boxX, boxY});
+            box.setFillColor(sf::Color(38, 38, 44));
+            box.setOutlineThickness(2.f);
+            box.setOutlineColor(sf::Color(90, 90, 240));
+            window.draw(box);
+
+            sf::Text title(uiFont, "Drag a rectangle to cut a tile of any size", 14);
+            title.setFillColor(sf::Color::White);
+            title.setPosition({boxX + boxW / 2.f - title.getLocalBounds().size.x / 2.f, boxY + 14.f});
+            window.draw(title);
+
+            sf::FloatRect moveModeBtnDraw({boxX + boxW / 2.f - 37.f, boxY + boxH - 90.f}, {32.f, 28.f});
+            sf::FloatRect cutModeBtnDraw({boxX + boxW / 2.f + 5.f, boxY + boxH - 90.f}, {32.f, 28.f});
+            sf::RectangleShape moveModeBg(moveModeBtnDraw.size);
+            moveModeBg.setPosition(moveModeBtnDraw.position);
+            moveModeBg.setFillColor(addImportMoveModeActive ? sf::Color(90, 90, 240) : sf::Color(60, 60, 70));
+            window.draw(moveModeBg);
+            if (moveLoaded) {
+                sf::Sprite moveIconSprite(texMove);
+                sf::Vector2u mSize = texMove.getSize();
+                moveIconSprite.setScale({22.f / std::max(1u, mSize.x), 22.f / std::max(1u, mSize.y)});
+                moveIconSprite.setPosition({moveModeBtnDraw.position.x + 5.f, moveModeBtnDraw.position.y + 3.f});
+                window.draw(moveIconSprite);
+            }
+            sf::RectangleShape cutModeBg(cutModeBtnDraw.size);
+            cutModeBg.setPosition(cutModeBtnDraw.position);
+            cutModeBg.setFillColor(!addImportMoveModeActive ? sf::Color(90, 90, 240) : sf::Color(60, 60, 70));
+            window.draw(cutModeBg);
+            if (cutIconLoaded) {
+                sf::Sprite cutIconSprite(texCutIcon);
+                sf::Vector2u cSize = texCutIcon.getSize();
+                cutIconSprite.setScale({22.f / std::max(1u, cSize.x), 22.f / std::max(1u, cSize.y)});
+                cutIconSprite.setPosition({cutModeBtnDraw.position.x + 5.f, cutModeBtnDraw.position.y + 3.f});
+                window.draw(cutIconSprite);
+            }
+
+            sf::FloatRect previewRect({boxX + 20.f, boxY + 40.f}, {boxW - 40.f, 260.f});
+
+            sf::RenderTexture previewRT;
+            if (previewRT.resize({static_cast<unsigned>(previewRect.size.x), static_cast<unsigned>(previewRect.size.y)})) {
+                previewRT.clear(sf::Color(15, 15, 18));
+
+                if (addImportPreviewLoaded) {
+                    sf::Vector2u texSize = addImportPreviewTexture.getSize();
+                    float scale = std::min(previewRect.size.x / std::max(1u, texSize.x), previewRect.size.y / std::max(1u, texSize.y)) * addImportPreviewZoom;
+                    sf::Sprite previewSprite(addImportPreviewTexture);
+                    previewSprite.setScale({scale, scale});
+                    float imgOriginX = (previewRect.size.x - texSize.x * scale) / 2.f + addImportPreviewPan.x;
+                    float imgOriginY = (previewRect.size.y - texSize.y * scale) / 2.f + addImportPreviewPan.y;
+                    previewSprite.setPosition({imgOriginX, imgOriginY});
+                    previewRT.draw(previewSprite);
+
+                    if (addImportCutDragging || addImportHasCut) {
+                        sf::Vector2f p0(std::min(addImportCutStart.x, addImportCutEnd.x) - previewRect.position.x,
+                                        std::min(addImportCutStart.y, addImportCutEnd.y) - previewRect.position.y);
+                        sf::Vector2f p1(std::max(addImportCutStart.x, addImportCutEnd.x) - previewRect.position.x,
+                                        std::max(addImportCutStart.y, addImportCutEnd.y) - previewRect.position.y);
+                        sf::RectangleShape cutBox({p1.x - p0.x, p1.y - p0.y});
+                        cutBox.setPosition(p0);
+                        cutBox.setFillColor(sf::Color(100, 200, 255, 60));
+                        cutBox.setOutlineThickness(1.f);
+                        cutBox.setOutlineColor(sf::Color(100, 200, 255));
+                        previewRT.draw(cutBox);
+                    }
+                }
+
+                previewRT.display();
+                sf::Sprite rtSprite(previewRT.getTexture());
+                rtSprite.setPosition(previewRect.position);
+                window.draw(rtSprite);
+            }
+
+            sf::FloatRect confirmCutBtn({boxX + 30.f, boxY + boxH - 46.f}, {140.f, 32.f});
+            sf::FloatRect backBtn({boxX + boxW - 170.f, boxY + boxH - 46.f}, {140.f, 32.f});
+            sf::RectangleShape confirmCutBg(confirmCutBtn.size);
+            confirmCutBg.setPosition(confirmCutBtn.position);
+            confirmCutBg.setFillColor(addImportHasCut ? sf::Color(60, 120, 70) : sf::Color(60, 70, 60));
+            window.draw(confirmCutBg);
+            sf::Text confirmCutText(uiFont, "Confirm Cut", 14);
+            confirmCutText.setPosition({confirmCutBtn.position.x + 14.f, confirmCutBtn.position.y + 8.f});
+            window.draw(confirmCutText);
+
+            sf::RectangleShape backBg(backBtn.size);
+            backBg.setPosition(backBtn.position);
+            backBg.setFillColor(sf::Color(90, 90, 100));
+            window.draw(backBg);
+            sf::Text backText(uiFont, "Back", 14);
+            backText.setPosition({backBtn.position.x + 46.f, backBtn.position.y + 8.f});
+            window.draw(backText);
         }
         else if (addPanelStage == AddPanelStage::Create) {
             sf::RectangleShape dim({static_cast<float>(WINDOW_WIDTH), static_cast<float>(WINDOW_HEIGHT)});
@@ -2181,8 +2774,12 @@ bool RunMapEditorSession(sf::RenderWindow& window,
             header.setPosition({static_cast<float>(WINDOW_WIDTH) - kInspectorWidth + kRowPad, 8.f});
             window.draw(header);
 
-            int tileIndex = tileLayer.get(pointerTileX, pointerTileY);
-            std::string tileValueStr = (tileIndex == TileLayer::kEmpty) ? "Empty" : std::to_string(tileIndex);
+            TileCell hoveredCell = tileLayer.get(pointerTileX, pointerTileY);
+            std::string tileValueStr = hoveredCell.empty()
+                ? "Empty"
+                : ((activeTilesetTab < static_cast<int>(tilesets.size()) && hoveredCell.tilesetIndex < static_cast<int>(tilesets.size()) && hoveredCell.tilesetIndex >= 0)
+                       ? tilesets[hoveredCell.tilesetIndex].name + " #" + std::to_string(hoveredCell.tileIndex)
+                       : std::to_string(hoveredCell.tileIndex));
 
             sf::FloatRect cellRow({static_cast<float>(WINDOW_WIDTH) - kInspectorWidth + kRowPad, 40.f},
                                    {kInspectorWidth - kRowPad * 2.f, kRowHeight});
@@ -2192,6 +2789,29 @@ bool RunMapEditorSession(sf::RenderWindow& window,
             DrawInspectorRow(window, uiFont, cellRow, "Cell",
                               std::to_string(pointerTileX) + ", " + std::to_string(pointerTileY), false);
             DrawInspectorRow(window, uiFont, tileRow, "Tile", tileValueStr, false);
+        }
+
+        // ---- "Add" button (drawn last so it sits above the info panels) ----
+        {
+            sf::FloatRect addBounds = ComputeAddButtonBounds(WINDOW_WIDTH, WINDOW_HEIGHT);
+            sf::RectangleShape addBg(addBounds.size);
+            addBg.setPosition(addBounds.position);
+            addBg.setFillColor(sf::Color(45, 45, 52));
+            addBg.setOutlineThickness(1.f);
+            addBg.setOutlineColor(sf::Color(80, 80, 90));
+            window.draw(addBg);
+            if (addIconLoaded) {
+                sf::Sprite addSprite(texAddIcon);
+                sf::Vector2u texSize = texAddIcon.getSize();
+                addSprite.setScale({addBounds.size.x / std::max(1u, texSize.x), addBounds.size.y / std::max(1u, texSize.y)});
+                addSprite.setPosition(addBounds.position);
+                window.draw(addSprite);
+            } else {
+                sf::Text addFallback(uiFont, "+", 18);
+                addFallback.setFillColor(sf::Color(200, 200, 210));
+                addFallback.setPosition({addBounds.position.x + 6.f, addBounds.position.y - 2.f});
+                window.draw(addFallback);
+            }
         }
 
         if (exitPrompt == ExitPrompt::ConfirmQuit) {
