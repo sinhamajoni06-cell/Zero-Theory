@@ -241,7 +241,7 @@ enum class InspectorField { None, X, Y, W, H, Rotation };
 enum class ExitPrompt { None, ConfirmHome, ConfirmSaveHome, ConfirmSaveQuit, ConfirmQuit };
 enum class EditorMode { Objects, TilePaint };
 enum class Tool { Pointer, Pencil, Eraser, Fill, Move };
-#include "Import.cpp"
+#include "Import.h"
 
 enum class AddPanelStage { None, ChooseAction, Create, ImportSize, CustomCut };
 
@@ -1705,7 +1705,7 @@ bool RunMapEditorSession(sf::RenderWindow& window,
                             int cutH = static_cast<int>(std::clamp((p1.y - imgOriginY) / scale, 0.f, static_cast<float>(texSize.y))) - cutY;
                             if (cutW > 0 && cutH > 0) {
                                 sf::Image fullImage = addImportPreviewTexture.copyToImage();
-                                sf::Image cropped({static_cast<unsigned>(cutW), static_cast<unsigned>(cutH)});
+                                sf::Image cropped(sf::Vector2u(static_cast<unsigned>(cutW), static_cast<unsigned>(cutH)));
                                 cropped.copy(fullImage, {0, 0}, sf::IntRect({cutX, cutY}, {cutW, cutH}));
                                 std::string tempPath = TILESETS_DIR + "_custom_cut_tmp.png";
                                 if (cropped.saveToFile(tempPath) &&
