@@ -384,16 +384,37 @@ void DrawConfirmModal(sf::RenderWindow& window, sf::Font& uiFont,
     window.draw(hintText);
 }
 
-void FloodFillTile(TileLayer& layer, int startX, int startY, int newTilesetIndex, int newTileIndex) {
+void FloodFillTile(TileLayer& layer, ShapeGrid& shapes, int startX, int startY, int newTilesetIndex, int newTileIndex) {
     TileCell target = layer.get(startX, startY);
-    if (target.tilesetIndex == newTilesetIndex && target.tileIndex == newTileIndex) return;
+    int targetShape = shapes.get(startX, startY);
+    if (target.tilesetIndex == newTilesetIndex && target.tileIndex == newTileIndex && targetShape == -1) return;
+    // Only flood through cells that match both the starting tile AND have no shape on them —
+    // a placed shape acts as a wall that blocks the fill, so it stays enclosed.
+    if (targetShape != -1) return;
     std::vector<sf::Vector2i> stack{{startX, startY}};
     while (!stack.empty()) {
         sf::Vector2i c = stack.back(); stack.pop_back();
         if (c.x < 0 || c.y < 0 || c.x >= layer.widthTiles() || c.y >= layer.heightTiles()) continue;
         TileCell current = layer.get(c.x, c.y);
         if (current.tilesetIndex != target.tilesetIndex || current.tileIndex != target.tileIndex) continue;
+        if (shapes.get(c.x, c.y) != -1) continue; // a shape here blocks the fill
         layer.set(c.x, c.y, newTilesetIndex, newTileIndex);
+        stack.push_back({c.x + 1, c.y});
+        stack.push_back({c.x - 1, c.y});
+        stack.push_back({c.x, c.y + 1});
+        stack.push_back({c.x, c.y - 1});
+    }
+}
+
+void FloodFillShape(ShapeGrid& shapes, TileLayer& layer, int startX, int startY, int newShapeId) {
+    int targetShape = shapes.get(startX, startY);
+    if (targetShape == newShapeId) return;
+    std::vector<sf::Vector2i> stack{{startX, startY}};
+    while (!stack.empty()) {
+        sf::Vector2i c = stack.back(); stack.pop_back();
+        if (c.x < 0 || c.y < 0 || c.x >= layer.widthTiles() || c.y >= layer.heightTiles()) continue;
+        if (shapes.get(c.x, c.y) != targetShape) continue;
+        shapes.set(c.x, c.y, newShapeId);
         stack.push_back({c.x + 1, c.y});
         stack.push_back({c.x - 1, c.y});
         stack.push_back({c.x, c.y + 1});
@@ -671,7 +692,7 @@ bool RunMapEditorSession(sf::RenderWindow& window,
     bool addIconLoaded    = texAddIcon.loadFromFile(ICON_PATH + "add.png");
     bool importIconLoaded = texImportIcon.loadFromFile(ICON_PATH + "import-icon.png");
     sf::Texture texCutIcon;
-    bool cutIconLoaded = texCutIcon.loadFromFile(ICON_PATH + "cut.png");
+    bool cutIconLoaded = texCutIcon.loadFromFile(ICON_PATH + "mouse-pointer-icon.png");
 
     sf::Texture editIconTexture;
     bool editIconLoaded = editIconTexture.loadFromFile("main/assets/images/UI/icons/edit.png");
@@ -1445,7 +1466,9 @@ bool RunMapEditorSession(sf::RenderWindow& window,
                     else if (L.hRow.contains(screenPos)) { beginEditingField(InspectorField::H, obj.h); continue; }
                     else if (L.rotRow.contains(screenPos)) { beginEditingField(InspectorField::Rotation, obj.rotation); continue; }
                 }
-                if (screenPos.x >= static_cast<float>(WINDOW_WIDTH) - kInspectorWidth) {
+                if (ComputeAddButtonBounds(WINDOW_WIDTH, WINDOW_HEIGHT).contains(screenPos)) {
+                    // Let the Add button click through even though it overlaps the inspector dock's x-range.
+                } else if (screenPos.x >= static_cast<float>(WINDOW_WIDTH) - kInspectorWidth) {
                     // Click landed inside the inspector dock but not on a row: ignore.
                     continue;
                 }
@@ -1825,7 +1848,10 @@ bool RunMapEditorSession(sf::RenderWindow& window,
                         tileLayer.set(cell.x, cell.y, TileLayer::kEmpty, TileLayer::kEmpty);
                         shapeGrid.set(cell.x, cell.y, -1);
                     }
-                    else if (currentTool == Tool::Fill) FloodFillTile(tileLayer, cell.x, cell.y, selectedTilesetIndex, selectedTileIndex);
+                    else if (currentTool == Tool::Fill) {
+                        if (selectedShapeId >= 0) FloodFillShape(shapeGrid, tileLayer, cell.x, cell.y, selectedShapeId);
+                        else FloodFillTile(tileLayer, shapeGrid, cell.x, cell.y, selectedTilesetIndex, selectedTileIndex);
+                    }
                     else if (currentTool == Tool::Pointer) {
                         pointerTileX = cell.x;
                         pointerTileY = cell.y;
@@ -1930,7 +1956,7 @@ bool RunMapEditorSession(sf::RenderWindow& window,
                     sf::Vector2f nowPos(static_cast<float>(mouseMoved->position.x), static_cast<float>(mouseMoved->position.y));
                     sf::Vector2f panDelta = nowPos - addImportPanDragStart;
                     addImportPreviewPan.x = addImportPreviewPanStart.x + panDelta.x;
-                    addImportPreviewPan.y = addImportPreviewPanStart.y - panDelta.y;
+                    addImportPreviewPan.y = addImportPreviewPanStart.y + panDelta.y;
                 }
                 if (addImportCutDragging) {
                     addImportCutEnd = sf::Vector2f(static_cast<float>(mouseMoved->position.x), static_cast<float>(mouseMoved->position.y));
