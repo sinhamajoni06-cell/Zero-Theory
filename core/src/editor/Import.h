@@ -1,5 +1,6 @@
-// Import.cpp
+// Import.h
 // Tileset-import related types, split out of zero_editor_session.cpp.
+#pragma once
 
 #include <string>
 #include <vector>
