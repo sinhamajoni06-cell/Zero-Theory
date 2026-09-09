@@ -1415,9 +1415,28 @@ bool RunMapEditorSession(sf::RenderWindow& window,
                     float boxXCut = WINDOW_WIDTH / 2.f - boxWCut / 2.f;
                     float boxYCut = WINDOW_HEIGHT / 2.f - boxHCut / 2.f;
                     sf::FloatRect previewRectCut({boxXCut + 20.f, boxYCut + 40.f}, {boxWCut - 40.f, 260.f});
-                    if (previewRectCut.contains(wheelScreenPos)) {
+                    if (previewRectCut.contains(wheelScreenPos) && addImportPreviewLoaded) {
+                        sf::Vector2u texSize = addImportPreviewTexture.getSize();
+                        float baseScale = std::min(previewRectCut.size.x / std::max(1u, texSize.x),
+                                                    previewRectCut.size.y / std::max(1u, texSize.y));
+                        float oldScale = baseScale * addImportPreviewZoom;
+
                         float zoomStep = (wheel->delta > 0) ? 1.1f : 0.9f;
-                        addImportPreviewZoom = std::clamp(addImportPreviewZoom * zoomStep, 0.25f, 8.f);
+                        float newZoom = std::clamp(addImportPreviewZoom * zoomStep, 0.25f, 8.f);
+                        float newScale = baseScale * newZoom;
+
+                        // Keep the texture pixel under the cursor fixed on screen while zooming.
+                        float mx = wheelScreenPos.x - previewRectCut.position.x;
+                        float my = wheelScreenPos.y - previewRectCut.position.y;
+                        float offsetXOld = (previewRectCut.size.x - texSize.x * oldScale) / 2.f + addImportPreviewPan.x;
+                        float offsetYOld = (previewRectCut.size.y - texSize.y * oldScale) / 2.f + addImportPreviewPan.y;
+                        float ratio = newScale / oldScale;
+                        float offsetXNew = mx - ratio * (mx - offsetXOld);
+                        float offsetYNew = my - ratio * (my - offsetYOld);
+
+                        addImportPreviewZoom = newZoom;
+                        addImportPreviewPan.x = offsetXNew - (previewRectCut.size.x - texSize.x * newScale) / 2.f;
+                        addImportPreviewPan.y = offsetYNew - (previewRectCut.size.y - texSize.y * newScale) / 2.f;
                     }
                     continue;
                 }
@@ -1961,7 +1980,8 @@ bool RunMapEditorSession(sf::RenderWindow& window,
                 if (addImportCutDragging) {
                     addImportCutEnd = sf::Vector2f(static_cast<float>(mouseMoved->position.x), static_cast<float>(mouseMoved->position.y));
                 }
-                if (editorMode == EditorMode::TilePaint && currentTool != Tool::Move &&
+                if (addPanelStage == AddPanelStage::None &&
+                    editorMode == EditorMode::TilePaint && currentTool != Tool::Move &&
                     sf::Mouse::isButtonPressed(sf::Mouse::Button::Left)) {
                     sf::FloatRect canvasRectNow = ComputeCanvasRect(WINDOW_WIDTH, WINDOW_HEIGHT);
                     sf::Vector2f screenPosNow(static_cast<float>(mouseMoved->position.x), static_cast<float>(mouseMoved->position.y));
