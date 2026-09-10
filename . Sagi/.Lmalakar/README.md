@@ -10,9 +10,10 @@
 - Create `UI` **/** `GUI` for the game.
 - Created a **playable** test version for our game and **Uploaded** is as [`v0.2.1`](https://github.com/sinhamajoni06-cell/Zero-Theory/releases#release-v0.2.1) *Pre-Realis*.
 - Basic Map editor is done, farther updates are coming.
+- Updating the **`Map`** editor for Game.
 
 ## Working in- (`7-9-26`)
-- Updating the **`Map`** editor for Game.
+- Improve and add more in the **`Map`** editor for Game.
 
 ## Will work in- (`7-9-26`)
 - Create a system to transfer data from **Map Editor** to main game. So our games level designing will start.
