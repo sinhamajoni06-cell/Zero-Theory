@@ -729,8 +729,8 @@ bool RunMapEditorSession(sf::RenderWindow& window,
     AddPanelStage addPanelStage = AddPanelStage::None;
     std::string addImportPath;
     std::string addImportName;
-    int addImportTileW = 32;
-    int addImportTileH = 32;
+    int addImportTileW = 4;  // now: number of columns to split the image into
+    int addImportTileH = 4;  // now: number of rows to split the image into
 
     // ---- Tileset tab context menu (right-click a tab) ----
     int tilesetMenuIndex = -1;         // index into `tilesets`, -1 = menu closed
@@ -755,6 +755,13 @@ bool RunMapEditorSession(sf::RenderWindow& window,
     bool addImportPanning = false;
     sf::Vector2f addImportPanDragStart;
     sf::Vector2f addImportPreviewPanStart;
+
+    // Pan/zoom for the small preview panel in the ImportSize (naming) dialog.
+    float addImportSizeZoom = 1.f;
+    sf::Vector2f addImportSizePan;
+    bool addImportSizePanning = false;
+    sf::Vector2f addImportSizePanDragStart;
+    sf::Vector2f addImportSizePanStart;
 
     constexpr int kCreateCanvasCells = 16;
     std::vector<sf::Color> createCanvasPixels(static_cast<size_t>(kCreateCanvasCells) * kCreateCanvasCells, sf::Color::Transparent);
@@ -974,6 +981,13 @@ bool RunMapEditorSession(sf::RenderWindow& window,
     bool hasTileSelection = false;
     sf::Vector2i tileBoxStartCell{0, 0};
     sf::Vector2i tileBoxEndCell{0, 0};
+
+    // Click-and-drag move for a single occupied tile with the Pointer tool.
+    bool tileMoveDragging = false;
+    sf::Vector2i tileMoveSourceCell{0, 0};
+    sf::Vector2i tileMoveTargetCell{0, 0};
+    TileCell tileMoveTileData{};
+    int tileMoveShapeData = -1;
 
     // ---------------- Inspector state ----------------
     InspectorField editingField = InspectorField::None;
@@ -1217,10 +1231,14 @@ bool RunMapEditorSession(sf::RenderWindow& window,
                                 addImportName = addImportEditBuffer;
                                 addImportEditingField = ImportField::None;
                             } else if (addImportEditingField != ImportField::None) {
-                                int v = ParseNumberOr(addImportEditBuffer, 32.f) > 0 ? static_cast<int>(ParseNumberOr(addImportEditBuffer, 32.f)) : 32;
+                                int v = ParseNumberOr(addImportEditBuffer, 4.f) > 0 ? static_cast<int>(ParseNumberOr(addImportEditBuffer, 4.f)) : 1;
                                 if (addImportEditingField == ImportField::TileW) addImportTileW = v; else addImportTileH = v;
                                 addImportEditingField = ImportField::None;
-                            } else if (finalizeTilesetImport(addImportPath, addImportTileW, addImportTileH, addImportName)) {
+                            } else if (addImportPreviewLoaded &&
+                                       finalizeTilesetImport(addImportPath,
+                                           static_cast<int>(addImportPreviewTexture.getSize().x) / std::max(1, addImportTileW),
+                                           static_cast<int>(addImportPreviewTexture.getSize().y) / std::max(1, addImportTileH),
+                                           addImportName)) {
                                 addPanelStage = AddPanelStage::None;
                                 addImportName.clear();
                             }
@@ -1416,6 +1434,35 @@ bool RunMapEditorSession(sf::RenderWindow& window,
 
             if (const auto* wheel = event->getIf<sf::Event::MouseWheelScrolled>()) {
                 sf::Vector2f wheelScreenPos(static_cast<float>(wheel->position.x), static_cast<float>(wheel->position.y));
+                if (addPanelStage == AddPanelStage::ImportSize) {
+                    float boxWSize = 560.f, boxHSize = 268.f;
+                    float boxXSize = WINDOW_WIDTH / 2.f - boxWSize / 2.f;
+                    float boxYSize = WINDOW_HEIGHT / 2.f - boxHSize / 2.f;
+                    sf::FloatRect cutPreviewRect({boxXSize + 30.f, boxYSize + 34.f}, {160.f, 160.f});
+                    if (cutPreviewRect.contains(wheelScreenPos) && addImportPreviewLoaded) {
+                        sf::Vector2u texSize = addImportPreviewTexture.getSize();
+                        float baseScale = std::min(cutPreviewRect.size.x / std::max(1u, texSize.x),
+                                                    cutPreviewRect.size.y / std::max(1u, texSize.y));
+                        float oldScale = baseScale * addImportSizeZoom;
+
+                        float zoomStep = (wheel->delta > 0) ? 1.1f : 0.9f;
+                        float newZoom = std::clamp(addImportSizeZoom * zoomStep, 0.25f, 8.f);
+                        float newScale = baseScale * newZoom;
+
+                        float mx = wheelScreenPos.x - cutPreviewRect.position.x;
+                        float my = wheelScreenPos.y - cutPreviewRect.position.y;
+                        float offsetXOld = (cutPreviewRect.size.x - texSize.x * oldScale) / 2.f + addImportSizePan.x;
+                        float offsetYOld = (cutPreviewRect.size.y - texSize.y * oldScale) / 2.f + addImportSizePan.y;
+                        float ratio = newScale / oldScale;
+                        float offsetXNew = mx - ratio * (mx - offsetXOld);
+                        float offsetYNew = my - ratio * (my - offsetYOld);
+
+                        addImportSizeZoom = newZoom;
+                        addImportSizePan.x = offsetXNew - (cutPreviewRect.size.x - texSize.x * newScale) / 2.f;
+                        addImportSizePan.y = offsetYNew - (cutPreviewRect.size.y - texSize.y * newScale) / 2.f;
+                    }
+                    continue;
+                }
                 if (addPanelStage == AddPanelStage::CustomCut) {
                     float boxWCut = 460.f, boxHCut = 420.f;
                     float boxXCut = WINDOW_WIDTH / 2.f - boxWCut / 2.f;
@@ -1638,16 +1685,19 @@ bool RunMapEditorSession(sf::RenderWindow& window,
                             addPanelStage = AddPanelStage::None;
                         }
                     } else if (addPanelStage == AddPanelStage::ImportSize) {
-                        float boxW = 360.f, boxH = 216.f;
+                        float boxW = 560.f, boxH = 268.f;
                         float boxX = WINDOW_WIDTH / 2.f - boxW / 2.f;
                         float boxY = WINDOW_HEIGHT / 2.f - boxH / 2.f;
                         if (!sf::FloatRect({boxX, boxY}, {boxW, boxH}).contains(screenPos)) {
                             addPanelStage = AddPanelStage::None;
                             continue;
                         }
-                        sf::FloatRect nameRow({boxX + 30.f, boxY + 60.f}, {boxW - 60.f, 28.f});
-                        sf::FloatRect wRow({boxX + 30.f, boxY + 96.f}, {boxW - 60.f, 28.f});
-                        sf::FloatRect hRow({boxX + 30.f, boxY + 132.f}, {boxW - 60.f, 28.f});
+                        float fieldsX = boxX + 210.f;
+                        float fieldsW = boxW - 210.f - 30.f;
+                        sf::FloatRect nameRow({fieldsX, boxY + 60.f}, {fieldsW, 28.f});
+                        sf::FloatRect wRow({fieldsX, boxY + 96.f}, {fieldsW, 28.f});
+                        sf::FloatRect hRow({fieldsX, boxY + 132.f}, {fieldsW, 28.f});
+                        sf::FloatRect cutPreviewRect({boxX + 30.f, boxY + 34.f}, {160.f, 160.f});
                         sf::FloatRect confirmBtn({boxX + 30.f, boxY + boxH - 46.f}, {140.f, 32.f});
                         sf::FloatRect cancelBtn({boxX + boxW - 170.f, boxY + boxH - 46.f}, {140.f, 32.f});
                         sf::FloatRect customCutBtn({boxX + boxW - 130.f, boxY + 34.f}, {110.f, 20.f});
@@ -1658,6 +1708,10 @@ bool RunMapEditorSession(sf::RenderWindow& window,
                             addImportPreviewPan = {0.f, 0.f};
                             addImportMoveModeActive = false;
                             addPanelStage = AddPanelStage::CustomCut;
+                        } else if (cutPreviewRect.contains(screenPos)) {
+                            addImportSizePanning = true;
+                            addImportSizePanDragStart = screenPos;
+                            addImportSizePanStart = addImportSizePan;
                         } else if (nameRow.contains(screenPos)) {
                             addImportEditingField = ImportField::Name;
                             addImportEditBuffer = addImportName;
@@ -1669,7 +1723,11 @@ bool RunMapEditorSession(sf::RenderWindow& window,
                             addImportEditBuffer = std::to_string(addImportTileH);
                         } else if (confirmBtn.contains(screenPos)) {
                             if (addImportEditingField == ImportField::Name) addImportName = addImportEditBuffer;
-                            if (finalizeTilesetImport(addImportPath, addImportTileW, addImportTileH, addImportName)) {
+                            if (addImportPreviewLoaded &&
+                                finalizeTilesetImport(addImportPath,
+                                    static_cast<int>(addImportPreviewTexture.getSize().x) / std::max(1, addImportTileW),
+                                    static_cast<int>(addImportPreviewTexture.getSize().y) / std::max(1, addImportTileH),
+                                    addImportName)) {
                                 addPanelStage = AddPanelStage::None;
                                 addImportName.clear();
                             }
@@ -1878,10 +1936,21 @@ bool RunMapEditorSession(sf::RenderWindow& window,
                         else FloodFillTile(tileLayer, shapeGrid, cell.x, cell.y, selectedTilesetIndex, selectedTileIndex);
                     }
                     else if (currentTool == Tool::Pointer) {
-                        tileBoxSelecting = true;
-                        hasTileSelection = false;
-                        tileBoxStartCell = cell;
-                        tileBoxEndCell = cell;
+                        TileCell hitCell = tileLayer.get(cell.x, cell.y);
+                        int hitShape = shapeGrid.get(cell.x, cell.y);
+                        bool occupied = hitCell.tilesetIndex != TileLayer::kEmpty || hitShape >= 0;
+                        if (occupied) {
+                            tileMoveDragging = true;
+                            tileMoveSourceCell = cell;
+                            tileMoveTargetCell = cell;
+                            tileMoveTileData = hitCell;
+                            tileMoveShapeData = hitShape;
+                        } else {
+                            tileBoxSelecting = true;
+                            hasTileSelection = false;
+                            tileBoxStartCell = cell;
+                            tileBoxEndCell = cell;
+                        }
                         tileDetailsOpen = false;
                         editor.clearSelection();
                     }
@@ -1942,6 +2011,9 @@ bool RunMapEditorSession(sf::RenderWindow& window,
                     if (addImportPanning) {
                         addImportPanning = false;
                     }
+                    if (addImportSizePanning) {
+                        addImportSizePanning = false;
+                    }
                     if (addImportCutDragging) {
                         addImportCutDragging = false;
                         addImportHasCut = true;
@@ -1953,6 +2025,26 @@ bool RunMapEditorSession(sf::RenderWindow& window,
                         editor.commitChange();
                         markObjectChange();
                         draggingSelection = false;
+                    }
+                    if (tileMoveDragging) {
+                        tileMoveDragging = false;
+                        if (tileMoveTargetCell == tileMoveSourceCell) {
+                            // No real drag happened: treat it as a plain click, same as before.
+                            pointerTileX = tileMoveSourceCell.x;
+                            pointerTileY = tileMoveSourceCell.y;
+                            tileDetailsOpen = true;
+                        } else {
+                            beginTileStroke();
+                            tileLayer.set(tileMoveSourceCell.x, tileMoveSourceCell.y, TileLayer::kEmpty, TileLayer::kEmpty);
+                            shapeGrid.set(tileMoveSourceCell.x, tileMoveSourceCell.y, -1);
+                            if (tileMoveShapeData >= 0) {
+                                shapeGrid.set(tileMoveTargetCell.x, tileMoveTargetCell.y, tileMoveShapeData);
+                                tileLayer.set(tileMoveTargetCell.x, tileMoveTargetCell.y, TileLayer::kEmpty, TileLayer::kEmpty);
+                            } else {
+                                tileLayer.set(tileMoveTargetCell.x, tileMoveTargetCell.y, tileMoveTileData.tilesetIndex, tileMoveTileData.tileIndex);
+                                shapeGrid.set(tileMoveTargetCell.x, tileMoveTargetCell.y, -1);
+                            }
+                        }
                     }
                     if (tileBoxSelecting) {
                         tileBoxSelecting = false;
@@ -1996,6 +2088,12 @@ bool RunMapEditorSession(sf::RenderWindow& window,
                     addImportPreviewPan.x = addImportPreviewPanStart.x + panDelta.x;
                     addImportPreviewPan.y = addImportPreviewPanStart.y + panDelta.y;
                 }
+                if (addImportSizePanning) {
+                    sf::Vector2f nowPos(static_cast<float>(mouseMoved->position.x), static_cast<float>(mouseMoved->position.y));
+                    sf::Vector2f panDelta = nowPos - addImportSizePanDragStart;
+                    addImportSizePan.x = addImportSizePanStart.x + panDelta.x;
+                    addImportSizePan.y = addImportSizePanStart.y + panDelta.y;
+                }
                 if (addImportCutDragging) {
                     addImportCutEnd = sf::Vector2f(static_cast<float>(mouseMoved->position.x), static_cast<float>(mouseMoved->position.y));
                 }
@@ -2022,6 +2120,9 @@ bool RunMapEditorSession(sf::RenderWindow& window,
                         }
                         else if (currentTool == Tool::Pointer && tileBoxSelecting) {
                             tileBoxEndCell = cell;
+                        }
+                        else if (currentTool == Tool::Pointer && tileMoveDragging) {
+                            tileMoveTargetCell = cell;
                         }
                     }
                 }
@@ -2268,6 +2369,25 @@ bool RunMapEditorSession(sf::RenderWindow& window,
             marquee.setOutlineThickness(1.f);
             marquee.setOutlineColor(sf::Color(90, 90, 240, 180));
             window.draw(marquee);
+        }
+
+        if (tileMoveDragging && currentTool == Tool::Pointer) {
+            float ts = tileLayer.tileSize();
+            sf::RectangleShape sourceOutline({ts, ts});
+            sourceOutline.setPosition({tileMoveSourceCell.x * ts, tileMoveSourceCell.y * ts});
+            sourceOutline.setFillColor(sf::Color(240, 200, 90, 40));
+            sourceOutline.setOutlineThickness(2.f);
+            sourceOutline.setOutlineColor(sf::Color(240, 200, 90, 220));
+            window.draw(sourceOutline);
+
+            if (tileMoveTargetCell != tileMoveSourceCell) {
+                sf::RectangleShape targetOutline({ts, ts});
+                targetOutline.setPosition({tileMoveTargetCell.x * ts, tileMoveTargetCell.y * ts});
+                targetOutline.setFillColor(sf::Color(90, 240, 140, 60));
+                targetOutline.setOutlineThickness(2.f);
+                targetOutline.setOutlineColor(sf::Color(90, 240, 140, 220));
+                window.draw(targetOutline);
+            }
         }
 
         if ((tileBoxSelecting || hasTileSelection) && currentTool == Tool::Pointer) {
@@ -2561,21 +2681,32 @@ bool RunMapEditorSession(sf::RenderWindow& window,
             cutPreviewBg.setOutlineColor(sf::Color(70, 70, 80));
             window.draw(cutPreviewBg);
             if (addImportPreviewLoaded) {
+                // Clip drawing to the preview panel so a zoomed/panned image can't
+                // spill out over the rest of the dialog.
+                sf::View prevView = window.getView();
+                sf::Vector2u winSize = window.getSize();
+                sf::View clipView(sf::FloatRect(cutPreviewRect.position, cutPreviewRect.size));
+                clipView.setViewport(sf::FloatRect(
+                    {cutPreviewRect.position.x / winSize.x, cutPreviewRect.position.y / winSize.y},
+                    {cutPreviewRect.size.x / winSize.x, cutPreviewRect.size.y / winSize.y}));
+                window.setView(clipView);
+
                 sf::Vector2u texSize = addImportPreviewTexture.getSize();
-                float thumbScale = std::min(cutPreviewRect.size.y / std::max(1u, texSize.y),
-                                             cutPreviewRect.size.x / std::max(1u, texSize.x));
+                float baseScale = std::min(cutPreviewRect.size.y / std::max(1u, texSize.y),
+                                            cutPreviewRect.size.x / std::max(1u, texSize.x));
+                float thumbScale = baseScale * addImportSizeZoom;
                 sf::Vector2f imgPos(
-                    cutPreviewRect.position.x + (cutPreviewRect.size.x - texSize.x * thumbScale) / 2.f,
-                    cutPreviewRect.position.y + (cutPreviewRect.size.y - texSize.y * thumbScale) / 2.f);
+                    cutPreviewRect.position.x + (cutPreviewRect.size.x - texSize.x * thumbScale) / 2.f + addImportSizePan.x,
+                    cutPreviewRect.position.y + (cutPreviewRect.size.y - texSize.y * thumbScale) / 2.f + addImportSizePan.y);
                 sf::Sprite thumbSprite(addImportPreviewTexture);
                 thumbSprite.setScale({thumbScale, thumbScale});
                 thumbSprite.setPosition(imgPos);
                 window.draw(thumbSprite);
 
-                int safeTileW = std::max(1, addImportTileW);
-                int safeTileH = std::max(1, addImportTileH);
-                int cols = std::max(1, static_cast<int>(texSize.x) / safeTileW);
-                int rows = std::max(1, static_cast<int>(texSize.y) / safeTileH);
+                int cols = std::max(1, addImportTileW);
+                int rows = std::max(1, addImportTileH);
+                int safeTileW = std::max(1, static_cast<int>(texSize.x) / cols);
+                int safeTileH = std::max(1, static_cast<int>(texSize.y) / rows);
 
                 // Godot-style tile grid overlay: draw the lines that fall on exact
                 // tile boundaries within the image (ignores any leftover partial-tile strip).
@@ -2594,6 +2725,7 @@ bool RunMapEditorSession(sf::RenderWindow& window,
                     gridLines.append(sf::Vertex{{imgPos.x + gridW, y}, lineColor});
                 }
                 window.draw(gridLines);
+                window.setView(prevView);
 
                 sf::Text cutSizeText(uiFont, std::to_string(cols) + " x " + std::to_string(rows) + " tiles", 13);
                 cutSizeText.setFillColor(sf::Color(180, 180, 190));
@@ -2609,10 +2741,10 @@ bool RunMapEditorSession(sf::RenderWindow& window,
             DrawInspectorRow(window, uiFont, nameRow, "Name",
                               nameDisplay.empty() ? "(auto)" : nameDisplay,
                               addImportEditingField == ImportField::Name);
-            DrawInspectorRow(window, uiFont, wRow, "Tile W",
+            DrawInspectorRow(window, uiFont, wRow, "Columns",
                               addImportEditingField == ImportField::TileW ? addImportEditBuffer : std::to_string(addImportTileW),
                               addImportEditingField == ImportField::TileW);
-            DrawInspectorRow(window, uiFont, hRow, "Tile H",
+            DrawInspectorRow(window, uiFont, hRow, "Rows",
                               addImportEditingField == ImportField::TileH ? addImportEditBuffer : std::to_string(addImportTileH),
                               addImportEditingField == ImportField::TileH);
 
