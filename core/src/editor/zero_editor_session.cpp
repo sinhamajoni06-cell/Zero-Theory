@@ -969,6 +969,12 @@ bool RunMapEditorSession(sf::RenderWindow& window,
     bool boxSelecting = false;
     sf::Vector2f dragStartWorld;
 
+    // Pointer-tool box select for tiles (MS Paint style marquee).
+    bool tileBoxSelecting = false;
+    bool hasTileSelection = false;
+    sf::Vector2i tileBoxStartCell{0, 0};
+    sf::Vector2i tileBoxEndCell{0, 0};
+
     // ---------------- Inspector state ----------------
     InspectorField editingField = InspectorField::None;
     std::string editBuffer;
@@ -1872,9 +1878,11 @@ bool RunMapEditorSession(sf::RenderWindow& window,
                         else FloodFillTile(tileLayer, shapeGrid, cell.x, cell.y, selectedTilesetIndex, selectedTileIndex);
                     }
                     else if (currentTool == Tool::Pointer) {
-                        pointerTileX = cell.x;
-                        pointerTileY = cell.y;
-                        tileDetailsOpen = true;
+                        tileBoxSelecting = true;
+                        hasTileSelection = false;
+                        tileBoxStartCell = cell;
+                        tileBoxEndCell = cell;
+                        tileDetailsOpen = false;
                         editor.clearSelection();
                     }
                     continue;
@@ -1946,6 +1954,17 @@ bool RunMapEditorSession(sf::RenderWindow& window,
                         markObjectChange();
                         draggingSelection = false;
                     }
+                    if (tileBoxSelecting) {
+                        tileBoxSelecting = false;
+                        hasTileSelection = true;
+                        if (tileBoxStartCell == tileBoxEndCell) {
+                            // No real drag happened: fall back to the old single-tile behavior.
+                            hasTileSelection = false;
+                            pointerTileX = tileBoxEndCell.x;
+                            pointerTileY = tileBoxEndCell.y;
+                            tileDetailsOpen = true;
+                        }
+                    }
                     if (boxSelecting) {
                         float movedDist = std::hypot(worldPos.x - dragStartWorld.x, worldPos.y - dragStartWorld.y);
                         if (movedDist < 3.f) {
@@ -2000,6 +2019,9 @@ bool RunMapEditorSession(sf::RenderWindow& window,
                         else if (currentTool == Tool::Eraser) {
                             tileLayer.set(cell.x, cell.y, TileLayer::kEmpty, TileLayer::kEmpty);
                             shapeGrid.set(cell.x, cell.y, -1);
+                        }
+                        else if (currentTool == Tool::Pointer && tileBoxSelecting) {
+                            tileBoxEndCell = cell;
                         }
                     }
                 }
@@ -2135,8 +2157,23 @@ bool RunMapEditorSession(sf::RenderWindow& window,
                 }
                 else if (keyPressed->code == sf::Keyboard::Key::Delete ||
                          keyPressed->code == sf::Keyboard::Key::Backspace) {
-                    editor.deleteSelected();
-                    markObjectChange();
+                    if (editorMode == EditorMode::TilePaint && hasTileSelection) {
+                        int minX = std::min(tileBoxStartCell.x, tileBoxEndCell.x);
+                        int maxX = std::max(tileBoxStartCell.x, tileBoxEndCell.x);
+                        int minY = std::min(tileBoxStartCell.y, tileBoxEndCell.y);
+                        int maxY = std::max(tileBoxStartCell.y, tileBoxEndCell.y);
+                        beginTileStroke();
+                        for (int y = minY; y <= maxY; ++y) {
+                            for (int x = minX; x <= maxX; ++x) {
+                                tileLayer.set(x, y, TileLayer::kEmpty, TileLayer::kEmpty);
+                                shapeGrid.set(x, y, -1);
+                            }
+                        }
+                        hasTileSelection = false;
+                    } else {
+                        editor.deleteSelected();
+                        markObjectChange();
+                    }
                 }
                 else if (keyPressed->code == sf::Keyboard::Key::R) {
                     editor.rotateSelectedBy(15.f);
@@ -2231,6 +2268,23 @@ bool RunMapEditorSession(sf::RenderWindow& window,
             marquee.setOutlineThickness(1.f);
             marquee.setOutlineColor(sf::Color(90, 90, 240, 180));
             window.draw(marquee);
+        }
+
+        if ((tileBoxSelecting || hasTileSelection) && currentTool == Tool::Pointer) {
+            // One rectangle around the whole selected region, like MS Paint's
+            // rectangular selection tool — while dragging AND after release.
+            float ts = tileLayer.tileSize();
+            sf::Vector2i a = tileBoxStartCell;
+            sf::Vector2i b = tileBoxEndCell;
+            int minX = std::min(a.x, b.x), maxX = std::max(a.x, b.x);
+            int minY = std::min(a.y, b.y), maxY = std::max(a.y, b.y);
+            sf::RectangleShape tileMarquee(
+                {(maxX - minX + 1) * ts, (maxY - minY + 1) * ts});
+            tileMarquee.setPosition({minX * ts, minY * ts});
+            tileMarquee.setFillColor(sf::Color(90, 200, 240, 40));
+            tileMarquee.setOutlineThickness(2.f);
+            tileMarquee.setOutlineColor(sf::Color(90, 200, 240, 220));
+            window.draw(tileMarquee);
         }
 
         // ---------------- Screen-space overlay: canvas border, inspector, modals ----------------
@@ -2471,7 +2525,7 @@ bool RunMapEditorSession(sf::RenderWindow& window,
             dim.setFillColor(sf::Color(0, 0, 0, 160));
             window.draw(dim);
 
-            float boxW = 360.f, boxH = 216.f;
+            float boxW = 560.f, boxH = 268.f;
             float boxX = WINDOW_WIDTH / 2.f - boxW / 2.f;
             float boxY = WINDOW_HEIGHT / 2.f - boxH / 2.f;
             sf::RectangleShape box({boxW, boxH});
@@ -2495,9 +2549,62 @@ bool RunMapEditorSession(sf::RenderWindow& window,
             customCutText.setPosition({customCutBtnDraw.position.x + 8.f, customCutBtnDraw.position.y + 3.f});
             window.draw(customCutText);
 
-            sf::FloatRect nameRow({boxX + 30.f, boxY + 60.f}, {boxW - 60.f, 28.f});
-            sf::FloatRect wRow({boxX + 30.f, boxY + 96.f}, {boxW - 60.f, 28.f});
-            sf::FloatRect hRow({boxX + 30.f, boxY + 132.f}, {boxW - 60.f, 28.f});
+            // Full-size preview panel on the left, with the resulting <cols> x <rows> tile
+            // count labeled underneath it. Fields sit to the right of the panel.
+            float fieldsX = boxX + 210.f;
+            float fieldsW = boxW - 210.f - 30.f;
+            sf::FloatRect cutPreviewRect({boxX + 30.f, boxY + 34.f}, {160.f, 160.f});
+            sf::RectangleShape cutPreviewBg(cutPreviewRect.size);
+            cutPreviewBg.setPosition(cutPreviewRect.position);
+            cutPreviewBg.setFillColor(sf::Color(24, 24, 28));
+            cutPreviewBg.setOutlineThickness(1.f);
+            cutPreviewBg.setOutlineColor(sf::Color(70, 70, 80));
+            window.draw(cutPreviewBg);
+            if (addImportPreviewLoaded) {
+                sf::Vector2u texSize = addImportPreviewTexture.getSize();
+                float thumbScale = std::min(cutPreviewRect.size.y / std::max(1u, texSize.y),
+                                             cutPreviewRect.size.x / std::max(1u, texSize.x));
+                sf::Vector2f imgPos(
+                    cutPreviewRect.position.x + (cutPreviewRect.size.x - texSize.x * thumbScale) / 2.f,
+                    cutPreviewRect.position.y + (cutPreviewRect.size.y - texSize.y * thumbScale) / 2.f);
+                sf::Sprite thumbSprite(addImportPreviewTexture);
+                thumbSprite.setScale({thumbScale, thumbScale});
+                thumbSprite.setPosition(imgPos);
+                window.draw(thumbSprite);
+
+                int safeTileW = std::max(1, addImportTileW);
+                int safeTileH = std::max(1, addImportTileH);
+                int cols = std::max(1, static_cast<int>(texSize.x) / safeTileW);
+                int rows = std::max(1, static_cast<int>(texSize.y) / safeTileH);
+
+                // Godot-style tile grid overlay: draw the lines that fall on exact
+                // tile boundaries within the image (ignores any leftover partial-tile strip).
+                float gridW = cols * safeTileW * thumbScale;
+                float gridH = rows * safeTileH * thumbScale;
+                sf::VertexArray gridLines(sf::PrimitiveType::Lines);
+                sf::Color lineColor(255, 255, 255, 160);
+                for (int c = 0; c <= cols; ++c) {
+                    float x = imgPos.x + c * safeTileW * thumbScale;
+                    gridLines.append(sf::Vertex{{x, imgPos.y}, lineColor});
+                    gridLines.append(sf::Vertex{{x, imgPos.y + gridH}, lineColor});
+                }
+                for (int r = 0; r <= rows; ++r) {
+                    float y = imgPos.y + r * safeTileH * thumbScale;
+                    gridLines.append(sf::Vertex{{imgPos.x, y}, lineColor});
+                    gridLines.append(sf::Vertex{{imgPos.x + gridW, y}, lineColor});
+                }
+                window.draw(gridLines);
+
+                sf::Text cutSizeText(uiFont, std::to_string(cols) + " x " + std::to_string(rows) + " tiles", 13);
+                cutSizeText.setFillColor(sf::Color(180, 180, 190));
+                cutSizeText.setPosition({cutPreviewRect.position.x,
+                                          cutPreviewRect.position.y + cutPreviewRect.size.y + 8.f});
+                window.draw(cutSizeText);
+            }
+
+            sf::FloatRect nameRow({fieldsX, boxY + 60.f}, {fieldsW, 28.f});
+            sf::FloatRect wRow({fieldsX, boxY + 96.f}, {fieldsW, 28.f});
+            sf::FloatRect hRow({fieldsX, boxY + 132.f}, {fieldsW, 28.f});
             std::string nameDisplay = addImportEditingField == ImportField::Name ? addImportEditBuffer : addImportName;
             DrawInspectorRow(window, uiFont, nameRow, "Name",
                               nameDisplay.empty() ? "(auto)" : nameDisplay,
